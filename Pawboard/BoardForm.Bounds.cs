@@ -4,8 +4,9 @@ using Vortice.Direct2D1;
 namespace Pawboard;
 
 // The board has edges, so you can't get lost in endless empty space. It's as big as what you
-// see fully zoomed out from the start view, and grows to include anything drawn beyond that.
-// The view can't zoom out past the whole board or move beyond its edges.
+// see fully zoomed out from the start view, and grows to include anything drawn beyond that,
+// always keeping the screen's shape. So fully zoomed out, the board fills the screen exactly and
+// its edges are never visible; zoomed in, you can't move past them.
 public sealed partial class BoardForm
 {
     RectangleF boardBounds;
@@ -32,6 +33,14 @@ public sealed partial class BoardForm
         var size = home / MinZoom;
         var bounds = new RectangleF(center.X - size.X / 2, center.Y - size.Y / 2, size.X, size.Y);
         foreach (var item in board.Items) bounds = RectangleF.Union(bounds, item.Bounds);
+
+        // Grow the shorter side so the board has exactly the screen's shape.
+        float aspect = home.X / home.Y;
+        var mid = new Vector2(bounds.X + bounds.Width / 2, bounds.Y + bounds.Height / 2);
+        if (bounds.Width / bounds.Height > aspect)
+            bounds = new RectangleF(bounds.X, mid.Y - bounds.Width / aspect / 2, bounds.Width, bounds.Width / aspect);
+        else
+            bounds = new RectangleF(mid.X - bounds.Height * aspect / 2, bounds.Y, bounds.Height * aspect, bounds.Height);
         return bounds;
     }
 
@@ -46,12 +55,16 @@ public sealed partial class BoardForm
         }
     }
 
-    // Keeps the view inside the board. Where the board is smaller than the screen (fully zoomed
-    // out), it's centred instead.
+    // Keeps the view inside the board. At the lowest zoom the board and the screen are the same
+    // size; the centring only catches rounding there.
     void ClampView()
     {
         var b = BoardBounds;
         var s = ClientDips;
+        // Never further out than the whole board (a saved view or an undo can ask for that).
+        float lowest = LowestZoom;
+        if (zoom < lowest) zoom = lowest;
+        if (targetZoom < lowest) targetZoom = lowest;
         offset = new Vector2(ClampAxis(offset.X, b.Left, b.Right, s.X), ClampAxis(offset.Y, b.Top, b.Bottom, s.Y));
     }
 
@@ -72,24 +85,5 @@ public sealed partial class BoardForm
         ClampView();
         cacheDirty = true;
         Invalidate();
-    }
-
-    // Shades whatever lies beyond the board's edges, so you can see where it ends.
-    void DrawBoardEdge(ID2D1RenderTarget c)
-    {
-        var b = BoardBounds;
-        var tl = WorldToScreen(new Vector2(b.Left, b.Top));
-        var br = WorldToScreen(new Vector2(b.Right, b.Bottom));
-        var s = ClientDips;
-        if (tl.X <= 0 && tl.Y <= 0 && br.X >= s.X && br.Y >= s.Y) return;   // the board fills the screen
-
-        // Slightly darker beyond the edge, in both light and dark mode.
-        brush!.Color = new Vortice.Mathematics.Color4(0, 0, 0, dark ? 0.35f : 0.06f);
-        if (tl.Y > 0) c.FillRectangle(new Vortice.RawRectF(0, 0, s.X, tl.Y), brush);
-        if (br.Y < s.Y) c.FillRectangle(new Vortice.RawRectF(0, br.Y, s.X, s.Y), brush);
-        if (tl.X > 0) c.FillRectangle(new Vortice.RawRectF(0, MathF.Max(0, tl.Y), tl.X, MathF.Min(s.Y, br.Y)), brush);
-        if (br.X < s.X) c.FillRectangle(new Vortice.RawRectF(br.X, MathF.Max(0, tl.Y), s.X, MathF.Min(s.Y, br.Y)), brush);
-        brush.Color = Colors.Faint(dark ? 0.18f : 0.12f);
-        c.DrawRectangle(new Vortice.RawRectF(tl.X, tl.Y, br.X, br.Y), brush, 1f);
     }
 }

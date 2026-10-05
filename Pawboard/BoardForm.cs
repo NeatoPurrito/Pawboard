@@ -350,12 +350,13 @@ public sealed partial class BoardForm : Form
 
     void RebuildCache()
     {
+        ClampView();   // the board may have shrunk (undo, erase) since the view was last checked
         var c = cache!;
         c.BeginDraw();
         c.Transform = Matrix3x2.Identity;
         c.Clear(Colors.Background);
         DrawBackdrop(c);
-        DrawBoardEdge(c);
+
 
         var view = VisibleWorldRect();
         foreach (var item in eraseWorking ?? board.Items)
