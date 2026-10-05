@@ -50,6 +50,7 @@ public sealed partial class BoardForm
     void SetBackdrop(Backdrop b)
     {
         backdrop = b;
+        contentVersion++;
         cacheDirty = true;
         SaveSettings();
         Invalidate();

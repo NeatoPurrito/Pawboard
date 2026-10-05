@@ -48,6 +48,11 @@ public sealed partial class BoardForm : Form
     // Background, dots and finished items, drawn once per view change. While you draw,
     // a frame is just this bitmap plus whatever is in progress.
     ID2D1BitmapRenderTarget? cache;
+    // A picture of the whole board at 100%. While a zoom animates, the frames just scale this
+    // picture instead of redrawing everything (too slow for every frame on big screens); once
+    // the zoom settles, the cache is redrawn sharp. Rebuilt only when the content has changed.
+    ID2D1BitmapRenderTarget? boardPicture;
+    int contentVersion, boardPictureVersion = -1;
     bool cacheDirty = true;
 
     readonly Board board = new();
@@ -94,7 +99,13 @@ public sealed partial class BoardForm : Form
     TextItem? pressedText;
     TextItem? movingText;
     Vector2 pressStart;
-    Item? hiddenInCache;             // the original of a text being edited, moved or resized
+    // The original of a text being edited, moved or resized: drawn as an overlay instead.
+    Item? HiddenInCache
+    {
+        get => hiddenItem;
+        set { hiddenItem = value; contentVersion++; }
+    }
+    Item? hiddenItem;
 
     // Grab handles on a text box: corners scale the text, the side edges set where lines wrap.
     enum Grip { None, TopLeft, TopRight, BottomLeft, BottomRight, Left, Right }
@@ -162,7 +173,7 @@ public sealed partial class BoardForm : Form
         CreateMenuFonts();
 
         LoadBoard();
-        board.Changed += () => { saveTimer.Stop(); saveTimer.Start(); };
+        board.Changed += () => { contentVersion++; saveTimer.Stop(); saveTimer.Start(); };
         saveTimer.Tick += (_, _) => { saveTimer.Stop(); SaveBoard(); };
         caretTimer.Tick += (_, _) => { caretOn = !caretOn; Invalidate(); };
     }
@@ -269,6 +280,7 @@ public sealed partial class BoardForm : Form
     void DiscardDevice()
     {
         cache?.Dispose(); cache = null;
+        boardPicture?.Dispose(); boardPicture = null;
         brush?.Dispose(); brush = null;
         rt?.Dispose(); rt = null;
     }
@@ -279,6 +291,7 @@ public sealed partial class BoardForm : Form
         if (rt == null || ClientSize.Width <= 0 || ClientSize.Height <= 0) return;
         rt.Resize(new SizeI(ClientSize.Width, ClientSize.Height));
         cache?.Dispose(); cache = null;
+        boardPicture?.Dispose(); boardPicture = null;
         ClampView();
         cacheDirty = true;
         Invalidate();
@@ -318,7 +331,9 @@ public sealed partial class BoardForm : Form
             cache.TextAntialiasMode = Vortice.Direct2D1.TextAntialiasMode.Grayscale;
             cacheDirty = true;
         }
-        if (cacheDirty) RebuildCache();
+        bool scalePicture = zooming;   // still zooming after this frame's animation step
+        if (scalePicture) EnsureBoardPicture();
+        else if (cacheDirty) RebuildCache();
 
         if (active != null && activeDirty)
         {
@@ -330,7 +345,13 @@ public sealed partial class BoardForm : Form
         var r = rt!;
         r.BeginDraw();
         r.Transform = Matrix3x2.Identity;
-        r.DrawBitmap(cache.Bitmap, 1f, BitmapInterpolationMode.NearestNeighbor);
+        if (scalePicture)
+        {
+            r.Transform = ViewTransform;
+            r.DrawBitmap(boardPicture!.Bitmap, 1f, BitmapInterpolationMode.Linear);
+            r.Transform = Matrix3x2.Identity;
+        }
+        else r.DrawBitmap(cache.Bitmap, 1f, BitmapInterpolationMode.NearestNeighbor);
 
         if (active != null && activeGeometry != null)
         {
@@ -352,7 +373,29 @@ public sealed partial class BoardForm : Form
     void RebuildCache()
     {
         ClampView();   // the board may have shrunk (undo, erase) since the view was last checked
-        var c = cache!;
+        if (PaintBoard(cache!)) cacheDirty = false;
+    }
+
+    void EnsureBoardPicture()
+    {
+        if (boardPicture == null)
+        {
+            boardPicture = rt!.CreateCompatibleRenderTarget(null, null, null, CompatibleRenderTargetOptions.None);
+            boardPicture.TextAntialiasMode = Vortice.Direct2D1.TextAntialiasMode.Grayscale;
+            boardPictureVersion = -1;
+        }
+        if (boardPictureVersion == contentVersion) return;
+        // Paint the start view (100%, which is the whole board) into the picture.
+        var (viewOffset, viewZoom) = (offset, zoom);
+        (offset, zoom) = (Vector2.Zero, 1);
+        bool painted = PaintBoard(boardPicture);
+        (offset, zoom) = (viewOffset, viewZoom);
+        if (painted) boardPictureVersion = contentVersion;
+    }
+
+    // Background, pattern and every visible item, at the current view. False if the device was lost.
+    bool PaintBoard(ID2D1BitmapRenderTarget c)
+    {
         c.BeginDraw();
         c.Transform = Matrix3x2.Identity;
         c.Clear(Colors.Background);
@@ -362,12 +405,12 @@ public sealed partial class BoardForm : Form
         var view = VisibleWorldRect();
         foreach (var item in eraseWorking ?? board.Items)
         {
-            if (item == hiddenInCache || !item.Bounds.IntersectsWith(view)) continue;
+            if (item == HiddenInCache || !item.Bounds.IntersectsWith(view)) continue;
             DrawItem(c, item);
         }
         c.Transform = Matrix3x2.Identity;
-        if (c.EndDraw().Failure) { DiscardDevice(); return; }
-        cacheDirty = false;
+        if (c.EndDraw().Failure) { DiscardDevice(); return false; }
+        return true;
     }
 
     void DrawItem(ID2D1RenderTarget target, Item item)
@@ -658,6 +701,7 @@ public sealed partial class BoardForm : Form
     void ToggleDark()
     {
         dark = !dark;
+        contentVersion++;
         ApplyWindowTheme();
         cacheDirty = true;
         Invalidate();
@@ -1261,7 +1305,7 @@ public sealed partial class BoardForm : Form
         caret = Math.Clamp(caretAt, 0, working.Text.Length);
         editHistory.Clear();
         hoverText = null;
-        hiddenInCache = original;
+        HiddenInCache = original;
         cacheDirty = true;
         EditingChanged();
         RestartCaretBlink();
@@ -1276,7 +1320,7 @@ public sealed partial class BoardForm : Form
         var original = editOriginal;
         editing = null;
         editOriginal = null;
-        hiddenInCache = null;
+        HiddenInCache = null;
         caretTimer.Stop();
         cacheDirty = true;
         EditingChanged();
@@ -1350,7 +1394,7 @@ public sealed partial class BoardForm : Form
         mode = Mode.MoveText;
         movingText = pressedText.Copy();
         textInk.Finish(movingText);
-        hiddenInCache = pressedText;
+        HiddenInCache = pressedText;
         cacheDirty = true;
         Cursor = Cursors.SizeAll;
     }
@@ -1367,7 +1411,7 @@ public sealed partial class BoardForm : Form
         if (movingText != null && pressedText != null) board.Replace(pressedText, movingText);
         movingText = null;
         pressedText = null;
-        hiddenInCache = null;
+        HiddenInCache = null;
         cacheDirty = true;
     }
 
@@ -1385,7 +1429,7 @@ public sealed partial class BoardForm : Form
             resizeOriginal = target;
             resizeItem = target.Copy();
             textInk.Finish(resizeItem);
-            hiddenInCache = target;
+            HiddenInCache = target;
             cacheDirty = true;
         }
         resizeHandle = handle;
@@ -1447,7 +1491,7 @@ public sealed partial class BoardForm : Form
         {
             board.Replace(resizeOriginal, resizeItem);
             hoverText = resizeItem;
-            hiddenInCache = null;
+            HiddenInCache = null;
             cacheDirty = true;
         }
         else if (editing != null) RestartCaretBlink();
