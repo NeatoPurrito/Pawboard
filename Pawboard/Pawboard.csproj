@@ -10,6 +10,7 @@
     <!-- Real pixels on high-DPI screens; otherwise Windows scales a blurry bitmap of the board. -->
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <ApplicationIcon>pawboard.ico</ApplicationIcon>
+    <Version>0.1.0</Version>
   </PropertyGroup>
 
   <ItemGroup>
