@@ -5,6 +5,8 @@
 A whiteboard on your Windows desktop. It sits behind your icons as your wallpaper, so you can
 scribble notes, lists and doodles right where you'll see them.
 
+![Pawboard on a desktop: handwritten notes, a to-do list and doodles behind the desktop icons](docs/demo.gif)
+
 Made with Claude (Opus 5.5). I came up with the idea and tested it, Claude wrote the code.
 
 ## Download
