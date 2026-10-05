@@ -153,7 +153,7 @@ public sealed partial class BoardForm : Form
         dark = settings.Dark;
         if (!Enum.TryParse(settings.Background, out backdrop)) backdrop = Backdrop.Dots;
         ApplyWindowTheme();
-        Cursor = Cursors.Cross;
+        SetPointer(Cursors.Cross);
         KeyPreview = true;
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.Opaque, true);
         SetStyle(ControlStyles.OptimizedDoubleBuffer, false);
@@ -838,12 +838,19 @@ public sealed partial class BoardForm : Form
         Invalidate();
     }
 
+    // The mouse pointer shape, in a window only. On the wallpaper the icon layer above the board
+    // owns the pointer and resets it at once, so setting it there just makes it flicker.
+    void SetPointer(Cursor shape)
+    {
+        if (!wallpaper) Cursor = shape;
+    }
+
     void UpdateCursor()
     {
-        if (mode == Mode.Pan) { Cursor = Cursors.SizeAll; return; }
-        if (toolbarRect.Contains(cursor.X, cursor.Y)) { Cursor = Cursors.Hand; return; }
+        if (mode == Mode.Pan) { SetPointer(Cursors.SizeAll); return; }
+        if (toolbarRect.Contains(cursor.X, cursor.Y)) { SetPointer(Cursors.Hand); return; }
         var handle = mode == Mode.ResizeText ? resizeHandle : hoverHandle;
-        Cursor = tool switch
+        SetPointer(tool switch
         {
             Tool.Text when handle is Grip.TopLeft or Grip.BottomRight => Cursors.SizeNWSE,
             Tool.Text when handle is Grip.TopRight or Grip.BottomLeft => Cursors.SizeNESW,
@@ -851,7 +858,7 @@ public sealed partial class BoardForm : Form
             Tool.Text when hoverText != null && editing == null => Cursors.SizeAll,
             Tool.Text => Cursors.IBeam,
             _ => Cursors.Cross,
-        };
+        });
     }
 
     // ---------- animation ----------
@@ -1396,7 +1403,7 @@ public sealed partial class BoardForm : Form
         textInk.Finish(movingText);
         HiddenInCache = pressedText;
         cacheDirty = true;
-        Cursor = Cursors.SizeAll;
+        SetPointer(Cursors.SizeAll);
     }
 
     void MoveText()
@@ -1531,7 +1538,7 @@ public sealed partial class BoardForm : Form
         panLast = cursor;
         panSamples.Clear();
         RecordPanSample();
-        Cursor = Cursors.SizeAll;
+        SetPointer(Cursors.SizeAll);
     }
 
     void RecordPanSample()
