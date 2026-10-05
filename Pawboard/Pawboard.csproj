@@ -11,6 +11,16 @@
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <ApplicationIcon>pawboard.ico</ApplicationIcon>
     <Version>0.1.0</Version>
+    <!-- The window code assumes a 64-bit process (pointer-sized window data). -->
+    <PlatformTarget>x64</PlatformTarget>
+    <!-- Builds don't carry the folder they were built in (which includes the Windows user name). -->
+    <Deterministic>true</Deterministic>
+    <PathMap>$(MSBuildProjectDirectory)=Pawboard</PathMap>
+  </PropertyGroup>
+
+  <!-- Release builds ship without debug symbols, which would otherwise record local paths. -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugType>none</DebugType>
   </PropertyGroup>
 
   <ItemGroup>

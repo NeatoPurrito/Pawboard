@@ -47,7 +47,7 @@ public sealed class TextInk : IDisposable
     {
         var local = (world - t.Position) / t.Scale;
         t.Layout!.HitTestPoint(local.X, local.Y, out RawBool trailing, out _, out var hit);
-        return (int)hit.TextPosition + (trailing ? (int)hit.Length : 0);
+        return Math.Clamp((int)hit.TextPosition + (trailing ? (int)hit.Length : 0), 0, t.Text.Length);
     }
 
     public void Dispose() => format.Dispose();

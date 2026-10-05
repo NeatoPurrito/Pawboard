@@ -162,6 +162,48 @@ static class RenderTest
         SavePng(bitmap, outPath);
     }
 
+    // Checks that erasing really removes ink (Ink.Bake): draws a line erased in two places, then
+    // the same line after Bake below it (they should look the same), and writes the point counts
+    // next to the PNG. A second line erased end to end must vanish.
+    public static void RunBakeTest(string outPath)
+    {
+        using var factory = D2D1.D2D1CreateFactory<ID2D1Factory>();
+        using var wic = new IWICImagingFactory();
+        using var bitmap = wic.CreateBitmap(900u, 400u, Vortice.WIC.PixelFormat.Format32bppPBGRA, BitmapCreateCacheOption.CacheOnLoad);
+        using var rt = factory.CreateWicBitmapRenderTarget(bitmap, new RenderTargetProperties());
+        using var brush = rt.CreateSolidColorBrush(new Color4(0.1f, 0.44f, 0.76f, 1));
+        var report = new List<string>();
+
+        Vector2 Wave(float t, float y) => new(50 + t * 800, y + MathF.Sin(t * MathF.PI * 4) * 40);
+        var line = new Stroke { Color = 0xFF1971C2, Size = 8, Smoothing = 2, Points = Mouse(t => Wave(t, 100), 1.0f, 300) };
+        Ink.Finish(factory, line);
+        Ink.Erase(factory, line, Wave(0.3f, 100) + new Vector2(0, -40), Wave(0.3f, 100) + new Vector2(0, 40), 14);
+        Ink.Erase(factory, line, Wave(0.62f, 100), Wave(0.70f, 100), 12);
+        Ink.Erase(factory, line, Wave(0.9f, 100) + new Vector2(0, -6), Wave(0.9f, 100) + new Vector2(0, -6), 5);   // nibble only
+
+        var gone = new Stroke { Color = 0xFFE03131, Size = 6, Smoothing = 2, Points = Mouse(t => new Vector2(100 + t * 300, 330), 1.0f, 300) };
+        Ink.Finish(factory, gone);
+        Ink.Erase(factory, gone, new Vector2(90, 330), new Vector2(410, 330), 12);
+
+        rt.BeginDraw();
+        rt.Clear(new Color4(0.97f, 0.97f, 0.96f, 1));
+        rt.FillGeometry(line.Geometry!, brush);
+        var pieces = Ink.Bake(factory, line);
+        rt.Transform = System.Numerics.Matrix3x2.CreateTranslation(0, 120);
+        brush.Color = new Color4(0.18f, 0.62f, 0.27f, 1);
+        foreach (var p in pieces) if (p.Geometry != null) rt.FillGeometry(p.Geometry, brush);
+        rt.Transform = System.Numerics.Matrix3x2.Identity;
+        var goneAfter = Ink.Bake(factory, gone);
+        brush.Color = new Color4(0.88f, 0.19f, 0.19f, 1);
+        foreach (var p in goneAfter) if (p.Geometry != null) rt.FillGeometry(p.Geometry, brush);
+        rt.EndDraw();
+        SavePng(bitmap, outPath, 900, 400);
+
+        report.Add($"erased line: {line.Points.Count} points before, {pieces.Count} pieces with {pieces.Sum(p => p.Points.Count)} points after");
+        report.Add($"fully erased line: {goneAfter.Count} pieces left (expected 0)");
+        File.WriteAllLines(Path.ChangeExtension(outPath, ".txt"), report);
+    }
+
     // Renders a board file the way the start view (100%) shows it, in dark mode, to a PNG.
     // For checking boards without opening a window. Reads the file; never changes it.
     public static void RenderBoard(string boardPath, string outPath, int width, int height)
@@ -186,9 +228,15 @@ static class RenderTest
             switch (item)
             {
                 case Stroke s:
+                    // Same as loading in the app: erased ink is removed for good first.
                     Ink.Finish(factory, s);
-                    if (s.Geometry != null) rt.FillGeometry(s.Geometry, brush);
-                    s.Geometry?.Dispose();
+                    var pieces = Ink.Bake(factory, s);
+                    if (pieces.Count != 1 || pieces[0] != s) s.Release();
+                    foreach (var piece in pieces)
+                    {
+                        if (piece.Geometry != null) rt.FillGeometry(piece.Geometry, brush);
+                        piece.Release();
+                    }
                     break;
                 case TextItem t:
                     textInk.Finish(t);

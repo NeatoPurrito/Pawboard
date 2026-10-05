@@ -109,11 +109,15 @@ public sealed partial class BoardForm
         // Switch the mouse hook off while a fullscreen game or video is in front.
         foregroundProc = (_, _, hwnd, _, _, _, _) =>
         {
-            // Another window came to the front (a chat, a login prompt...): close any open text
-            // box at once, so nothing typed for that window ends up on the board.
-            if (editing != null) CommitTextEdit();
-            UpdateFullscreen(hwnd);
-            fullscreenRecheck.Start();
+            try
+            {
+                // Another window came to the front (a chat, a login prompt...): close any open
+                // text box at once, so nothing typed for that window ends up on the board.
+                if (editing != null) CommitTextEdit();
+                UpdateFullscreen(hwnd);
+                fullscreenRecheck.Start();
+            }
+            catch (Exception ex) { Log.Write($"foreground handler error: {ex.GetType().Name}: {ex.Message}"); }
         };
         const uint EVENT_SYSTEM_FOREGROUND = 3, WINEVENT_OUTOFCONTEXT = 0;
         foregroundHook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, 0, foregroundProc, 0, 0, WINEVENT_OUTOFCONTEXT);
@@ -127,9 +131,9 @@ public sealed partial class BoardForm
             var path = Environment.GetFolderPath(folder);
             if (!Directory.Exists(path)) continue;
             var watcher = new FileSystemWatcher(path) { IncludeSubdirectories = false, EnableRaisingEvents = true };
-            watcher.Created += (_, _) => BeginInvoke(RefreshIconsSoon);
-            watcher.Deleted += (_, _) => BeginInvoke(RefreshIconsSoon);
-            watcher.Renamed += (_, _) => BeginInvoke(RefreshIconsSoon);
+            watcher.Created += (_, _) => Post(RefreshIconsSoon);
+            watcher.Deleted += (_, _) => Post(RefreshIconsSoon);
+            watcher.Renamed += (_, _) => Post(RefreshIconsSoon);
             desktopWatchers.Add(watcher);
         }
         Microsoft.Win32.SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
@@ -147,19 +151,27 @@ public sealed partial class BoardForm
         if (!wallpaper || ExitRequested) return;
         // Showing a form can re-apply its own size and position; put it back over all monitors.
         Desktop.AttachBehindIcons(Handle);
-        Log.Write($"shown: {Desktop.Describe(Handle)}");
-        var check = new System.Windows.Forms.Timer { Interval = 3000 };
-        check.Tick += (_, _) => { check.Dispose(); Log.Write($"3s later: {Desktop.Describe(Handle)}, visible {Visible}"); };
-        check.Start();
+    }
+
+    // Runs an action on the UI thread from any thread; quietly skipped once the board is closing.
+    void Post(Action action)
+    {
+        try
+        {
+            if (IsHandleCreated && !IsDisposed) BeginInvoke(action);
+        }
+        catch (InvalidOperationException) { }
     }
 
     void ConfirmClear()
     {
         CommitTextEdit();
         if (board.Items.Count == 0) return;
-        var answer = MessageBox.Show("Clear everything on the board?\n\nUndo on the toolbar can still bring it back.",
+        var answer = MessageBox.Show("Clear everything on the board?\n\nUndo on the toolbar can bring it back until Pawboard closes, and a backup copy is kept either way.",
             "Pawboard", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
         if (answer != DialogResult.Yes) return;
+        SaveBoard();
+        BoardStore.Backup();              // Undo only lasts until Pawboard closes; the backup stays
         board.Commit(new List<Item>());   // one undo step, like any other change
         hoverText = null;
         cacheDirty = true;
@@ -189,9 +201,16 @@ public sealed partial class BoardForm
         // Explorer restarting takes the wallpaper layer, and this window, with it. Keep the board.
         if (wallpaper && !ExitRequested && !RecreatingHandle)
         {
-            CommitTextEdit();
-            SaveBoard();
-            DetachFromDesktop();
+            try
+            {
+                CommitTextEdit();
+                SaveBoard();
+            }
+            finally
+            {
+                DetachFromDesktop();
+                ReleaseResources();
+            }
         }
         base.OnHandleDestroyed(e);
     }
@@ -272,11 +291,11 @@ public sealed partial class BoardForm
         // Plain moves are never claimed, or the pointer itself would stop moving.
         var client = Desktop.ToClient(boardWindow, screen);
 
-        // A press of the button we think is still held means its release was missed somehow:
-        // drop the old gesture rather than keep claiming clicks.
-        if ((message == InputHooks.WM_LBUTTONDOWN && hookCapture == MouseButtons.Left) ||
-            (message == InputHooks.WM_MBUTTONDOWN && hookCapture == MouseButtons.Middle) ||
-            (message == InputHooks.WM_RBUTTONDOWN && hookCapture == MouseButtons.Right))
+        // Any button press while a gesture is held means that gesture is over, or its release was
+        // missed somehow (another program, a lost event). Drop it and treat this press normally,
+        // so a stuck gesture can never keep eating clicks.
+        if (hookCapture != MouseButtons.None &&
+            message is InputHooks.WM_LBUTTONDOWN or InputHooks.WM_MBUTTONDOWN or InputHooks.WM_RBUTTONDOWN)
         {
             hookCapture = MouseButtons.None;
             rightUndecided = false;
@@ -314,7 +333,7 @@ public sealed partial class BoardForm
                     BeginInvoke(() => PointerUp(button, client));
                     return true;
                 default:
-                    return true;   // other buttons and the wheel mid-gesture: keep them off the desktop
+                    return false;  // the wheel and other releases go on to Windows as usual
             }
         }
 

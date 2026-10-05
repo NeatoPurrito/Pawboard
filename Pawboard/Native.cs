@@ -1,5 +1,9 @@
 using System.Runtime.InteropServices;
 
+// Windows DLLs are only ever loaded from System32, never from the folder the exe happens to sit
+// in (e.g. Downloads), so a stray file there can't be picked up instead.
+[assembly: DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+
 namespace Pawboard;
 
 static partial class Native

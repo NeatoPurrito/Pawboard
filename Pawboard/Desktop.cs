@@ -26,8 +26,8 @@ static class Desktop
     }
 
     // Makes sure a board window sits behind the desktop icons, opaque and covering every monitor.
-    // The window is normally created there already (see BoardForm.CreateParams); this also moves it
-    // back if it was created elsewhere, and resizes it when monitors change. Returns false if the
+    // Called when the board starts, again once it's shown (showing can reset the size), and when
+    // monitors change. Returns false if the
     // desktop couldn't be found (e.g. Explorer isn't running).
     public static bool AttachBehindIcons(nint hwnd)
     {
@@ -152,42 +152,46 @@ static class Desktop
         var listView = IconListView();
         if (listView == 0 || !IsWindowVisible(listView)) return rects;
 
-        object? windows = null;
+        object? windows = null, dispatch = null, browser = null, view = null;
         try
         {
             windows = Activator.CreateInstance(Type.GetTypeFromCLSID(new Guid("9BA05972-F6A8-11CF-A442-00A0C90A8F39"))!);
             object loc = 0;            // CSIDL_DESKTOP
             object root = null!;       // VT_EMPTY
             const int SWC_DESKTOP = 8, SWFO_NEEDDISPATCH = 1;
-            var dispatch = ((IShellWindows)windows!).FindWindowSW(ref loc, ref root, SWC_DESKTOP, out _, SWFO_NEEDDISPATCH);
+            dispatch = ((IShellWindows)windows!).FindWindowSW(ref loc, ref root, SWC_DESKTOP, out _, SWFO_NEEDDISPATCH);
             var sidTopLevelBrowser = new Guid("4C96BE40-915C-11CF-99D3-00AA004AE837");
             var iidShellBrowser = typeof(IShellBrowser).GUID;
-            var browser = (IShellBrowser)((IServiceProvider)dispatch).QueryService(ref sidTopLevelBrowser, ref iidShellBrowser);
-            var view = (IFolderView)browser.QueryActiveShellView();
+            browser = ((IServiceProvider)dispatch).QueryService(ref sidTopLevelBrowser, ref iidShellBrowser);
+            view = ((IShellBrowser)browser).QueryActiveShellView();
+            var folderView = (IFolderView)view;
 
-            view.GetSpacing(out var spacing);
+            folderView.GetSpacing(out var spacing);
             var origin = new POINT();
             ClientToScreen(listView, ref origin);
             const uint SVGIO_ALLVIEW = 2;
-            int count = view.ItemCount(SVGIO_ALLVIEW);
+            int count = Math.Min(folderView.ItemCount(SVGIO_ALLVIEW), 10_000);
             for (int i = 0; i < count; i++)
             {
-                view.Item(i, out var pidl);
+                folderView.Item(i, out var pidl);
                 try
                 {
-                    view.GetItemPosition(pidl, out var p);
+                    folderView.GetItemPosition(pidl, out var p);
                     rects.Add(new Rectangle(origin.X + p.X, origin.Y + p.Y, spacing.X, spacing.Y));
                 }
                 finally { Marshal.FreeCoTaskMem(pidl); }
             }
         }
-        catch (Exception ex) when (ex is COMException or InvalidCastException)
+        catch (Exception ex)
         {
-            // Explorer busy or restarting: no icon positions this time.
+            // Explorer busy, restarting or answering oddly: no icon positions this time.
+            Log.Write($"icon positions unavailable: {ex.GetType().Name}");
+            rects.Clear();
         }
         finally
         {
-            if (windows != null) Marshal.ReleaseComObject(windows);
+            foreach (var com in new[] { view, browser, dispatch, windows })
+                if (com != null && Marshal.IsComObject(com)) Marshal.ReleaseComObject(com);
         }
         return rects;
     }

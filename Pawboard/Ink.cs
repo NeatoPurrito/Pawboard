@@ -45,7 +45,9 @@ public static class Ink
             float inv = 1 / (2 * sig * sig);
             var sum = Vector2.Zero;
             float weights = 0;
-            for (int j = lo; j <= hi; j++)
+            // At most 64 neighbours each side: plenty for real strokes, and it keeps very dense or
+            // oddly scaled lines (say, from a crafted board file) from taking quadratic time.
+            for (int j = Math.Max(lo, i - 64); j <= Math.Min(hi, i + 64); j++)
             {
                 float d = along[j] - along[i];
                 float w = MathF.Exp(-d * d * inv);
@@ -139,6 +141,73 @@ public static class Ink
         if (s.Geometry == null || !HitsSegment(s, a, b, radius)) return false;
         using var shape = EraserShape(factory, [a, b], radius);
         return s.Geometry.CompareWithGeometry(shape, null, Tolerance) != GeometryRelation.Disjoint;
+    }
+
+    // Makes erasing real. The eraser's shape is cut out of a line's drawing, but its points are
+    // still in the data, so a saved or shared board would still contain what was rubbed out. This
+    // drops every point the eraser covered across the line's full width and splits the line into
+    // the pieces that are left. Eraser paths that touch a piece stay with it, so its cut edges look
+    // exactly as erased. A line rubbed out completely leaves nothing at all. Pieces too small to
+    // see are dropped. Returns the line itself if nothing needed removing.
+    public static List<Stroke> Bake(ID2D1Factory factory, Stroke s)
+    {
+        if (s.Erasures.Count == 0) return [s];
+        var pts = s.Points;
+        float half = s.Size / 2;
+        var gone = new bool[pts.Count];
+        bool any = false;
+        // Only eraser paths wide enough to cover the line's full width can remove points; their
+        // bounding boxes keep the exact distance checks to the points actually near them.
+        var covering = s.Erasures
+            .Where(r => r.Radius > half)
+            .Select(r => (Run: r, Margin: r.Radius - half, Box: RectangleF.Inflate(BoundsOf(r.Points, 0), r.Radius - half, r.Radius - half)))
+            .ToList();
+        for (int i = 0; i < pts.Count; i++)
+        {
+            var p = pts[i];
+            foreach (var (run, margin, box) in covering)
+            {
+                if (!box.Contains(p.X, p.Y) || DistanceSquaredToPath(p, run.Points) > margin * margin) continue;
+                gone[i] = any = true;
+                break;
+            }
+        }
+        if (!any) return [s];
+
+        var pieces = new List<Stroke>();
+        int start = -1;
+        for (int i = 0; i <= pts.Count; i++)
+        {
+            bool keep = i < pts.Count && !gone[i];
+            if (keep && start < 0) start = i;
+            if (keep || start < 0) continue;
+            AddPiece(start, i);
+            start = -1;
+        }
+        return pieces;
+
+        void AddPiece(int from, int to)
+        {
+            if (to - from < 2) return;   // a lone point would draw a dot that was never there
+            var piece = new Stroke { Color = s.Color, Size = s.Size, Smoothing = s.Smoothing, Points = pts.GetRange(from, to - from) };
+            var bounds = BoundsOf(piece.Points, s.Size);
+            foreach (var run in s.Erasures)
+                if (RectangleF.Inflate(BoundsOf(run.Points, 0), run.Radius, run.Radius).IntersectsWith(bounds))
+                    piece.Erasures.Add(run);
+            piece.InheritedRuns = piece.Erasures.Count;   // shared with the original: never extended
+            Finish(factory, piece);
+            float crumb = s.Size * 0.35f;
+            if (Area(piece) < crumb * crumb) { piece.Release(); return; }
+            pieces.Add(piece);
+        }
+    }
+
+    static float DistanceSquaredToPath(Vector2 p, List<Vector2> path)
+    {
+        if (path.Count == 1) return Vector2.DistanceSquared(p, path[0]);
+        float best = float.MaxValue;
+        for (int i = 1; i < path.Count; i++) best = MathF.Min(best, SegmentDistanceSquared(p, path[i - 1], path[i]));
+        return best;
     }
 
     // What's left of the stroke, as an area in world units².

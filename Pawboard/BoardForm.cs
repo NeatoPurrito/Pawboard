@@ -92,7 +92,7 @@ public sealed partial class BoardForm : Form
     TextItem? editing;               // the text box being typed in (a copy; the original stays for undo)
     TextItem? editOriginal;          // null when it's a new text
     int caret;
-    readonly Stack<(string Text, int Caret)> editHistory = new();
+    readonly List<(string Text, int Caret)> editHistory = new();   // capped, see SetEditText
     bool caretOn;
     readonly System.Windows.Forms.Timer caretTimer = new() { Interval = 530 };
     TextItem? hoverText;
@@ -127,7 +127,11 @@ public sealed partial class BoardForm : Form
     RectangleF toolbarRect;
 
     readonly System.Windows.Forms.Timer saveTimer = new() { Interval = 1500 };
-    string? saveError;
+    string? notice;                  // shown across the bottom of the board (save trouble, an unreadable board...)
+    bool saveFailed;
+    bool saveAfterLoad;
+    readonly System.Windows.Forms.Timer noticeTimer = new();
+    int renderFailures;
 
     readonly bool wallpaper;         // living behind the desktop icons instead of in a window
 
@@ -177,6 +181,8 @@ public sealed partial class BoardForm : Form
         board.Changed += () => { contentVersion++; saveTimer.Stop(); saveTimer.Start(); };
         saveTimer.Tick += (_, _) => { saveTimer.Stop(); SaveBoard(); };
         caretTimer.Tick += (_, _) => { caretOn = !caretOn; Invalidate(); };
+        noticeTimer.Tick += (_, _) => HideNotice();
+        if (saveAfterLoad) saveTimer.Start();
     }
 
     // ---------- persistence ----------
@@ -186,13 +192,41 @@ public sealed partial class BoardForm : Form
         var data = BoardStore.Load();
         offset = new Vector2(data.ViewX, data.ViewY);
         zoom = targetZoom = Math.Clamp(data.Zoom, MinZoom, MaxZoom);
-        foreach (var saved in data.Items)
+        board.Items.AddRange(LoadItems(data.Items, out bool cleaned));
+        // Erased ink found in the saved board is gone now; save soon so the file is clean too.
+        saveAfterLoad = cleaned;
+        if (BoardStore.Problem != null) ShowNotice(BoardStore.Problem, seconds: 30);
+    }
+
+    // Turns saved entries into board items. Entries that can't be read are skipped rather than
+    // stopping the whole board from loading, and erased ink is removed for good (see Ink.Bake),
+    // which also cleans boards saved before that existed.
+    List<Item> LoadItems(IEnumerable<BoardStore.SavedItem?> saved, out bool cleaned)
+    {
+        var items = new List<Item>();
+        cleaned = false;
+        foreach (var entry in saved)
         {
-            var item = BoardStore.ToItem(saved);
-            if (item == null) continue;
-            Finish(item);
-            board.Items.Add(item);
+            try
+            {
+                var item = BoardStore.ToItem(entry);
+                if (item == null) continue;
+                Finish(item);
+                if (item is not Stroke { Erasures.Count: > 0 } stroke) { items.Add(item); continue; }
+                var pieces = Ink.Bake(factory, stroke);
+                if (pieces.Count != 1 || pieces[0] != stroke)
+                {
+                    cleaned = true;
+                    stroke.Release();
+                }
+                items.AddRange(pieces);
+            }
+            catch (Exception ex)
+            {
+                Log.Write($"skipped a board item: {ex.GetType().Name}: {ex.Message}");
+            }
         }
+        return items;
     }
 
     void SaveBoard()
@@ -200,13 +234,35 @@ public sealed partial class BoardForm : Form
         try
         {
             BoardStore.Save(board, offset, zoom);
-            saveError = null;
+            if (saveFailed) { saveFailed = false; HideNotice(); }
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex)
         {
-            saveError = ex.Message;
-            Invalidate();
+            // Whatever went wrong, the board keeps working; it just says so until a save succeeds.
+            Log.Write($"save error: {ex.GetType().Name}: {ex.Message}");
+            saveFailed = true;
+            ShowNotice($"Couldn't save the board: {ex.Message}", seconds: 0);
         }
+    }
+
+    // A message across the bottom of the board. seconds = 0 keeps it until it's replaced or hidden.
+    void ShowNotice(string text, int seconds)
+    {
+        notice = text;
+        noticeTimer.Stop();
+        if (seconds > 0)
+        {
+            noticeTimer.Interval = seconds * 1000;
+            noticeTimer.Start();
+        }
+        Invalidate();
+    }
+
+    void HideNotice()
+    {
+        noticeTimer.Stop();
+        notice = null;
+        Invalidate();
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
@@ -221,8 +277,22 @@ public sealed partial class BoardForm : Form
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
         if (wallpaper) DetachFromDesktop();
-        DiscardDevice();
+        ReleaseResources();
+        base.OnFormClosed(e);
+    }
+
+    bool released;
+
+    void ReleaseResources()
+    {
+        if (released) return;
+        released = true;
         caretTimer.Dispose();
+        noticeTimer.Dispose();
+        saveTimer.Dispose();
+        DiscardDevice();
+        activeGeometry?.Dispose();
+        board.ReleaseAll();
         textInk.Dispose();
         iconFont.Dispose();
         foreach (var f in sizeLetterFonts) f.Dispose();
@@ -230,7 +300,6 @@ public sealed partial class BoardForm : Form
         DisposeMenuFonts();
         dwrite.Dispose();
         factory.Dispose();
-        base.OnFormClosed(e);
     }
 
     void Finish(Item item)
@@ -313,7 +382,20 @@ public sealed partial class BoardForm : Form
     protected override void OnPaint(PaintEventArgs e)
     {
         if (ClientSize.Width <= 0 || ClientSize.Height <= 0) return;
-        Render();
+        try
+        {
+            Render();
+            renderFailures = 0;
+        }
+        catch (Exception ex)
+        {
+            // Windows Forms stops painting a window for good after an exception in OnPaint. Start
+            // the graphics over instead and try again (a few times, so a lasting error can't spin).
+            Log.Write($"render error: {ex.GetType().Name}: {ex.Message}");
+            DiscardDevice();
+            if (++renderFailures <= 3) Invalidate();
+            return;
+        }
         if (zooming || coasting)
         {
             // Wait for the next screen refresh, then draw again: smooth at 60, 144 or 240 Hz alike.
@@ -335,6 +417,13 @@ public sealed partial class BoardForm : Form
         bool scalePicture = zooming;   // still zooming after this frame's animation step
         if (scalePicture) EnsureBoardPicture();
         else if (cacheDirty) RebuildCache();
+
+        // Losing the graphics device while painting the cache throws everything away: start over.
+        if (rt == null || cache == null || (scalePicture && boardPicture == null))
+        {
+            Invalidate();
+            return;
+        }
 
         if (active != null && activeDirty)
         {
@@ -366,7 +455,7 @@ public sealed partial class BoardForm : Form
         DrawEraserCursor(r);
         DrawToolbar(r);
         DrawMenu(r);
-        if (saveError != null) DrawBanner(r, $"Couldn't save the board: {saveError}");
+        if (notice != null) DrawBanner(r, notice);
 
         if (r.EndDraw().Failure) DiscardDevice();   // device lost: rebuild everything on the next frame
     }
@@ -767,15 +856,11 @@ public sealed partial class BoardForm : Form
             MessageBox.Show(DialogOwner, "That file couldn't be read as a Pawboard board.", "Pawboard", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
-        var items = new List<Item>();
-        foreach (var saved in data.Items)
-        {
-            var item = BoardStore.ToItem(saved);
-            if (item == null) continue;
-            Finish(item);
-            items.Add(item);
-        }
-        // Replacing the board is a single undo step, so Undo brings back what was there before.
+        var items = LoadItems(data.Items, out _);
+        // Replacing the board is a single undo step, so Undo brings back what was there before
+        // (until Pawboard closes); the backup keeps it after that.
+        SaveBoard();
+        BoardStore.Backup();
         board.Commit(items);
         zooming = coasting = false;
         offset = new Vector2(data.ViewX, data.ViewY);
@@ -824,11 +909,12 @@ public sealed partial class BoardForm : Form
     {
         if (editing != null)
         {
-            if (editHistory.Count > 0) { var (text, c) = editHistory.Pop(); SetEditText(text, c, record: false); }
+            if (editHistory.Count > 0) { var (text, c) = editHistory[^1]; editHistory.RemoveAt(editHistory.Count - 1); SetEditText(text, c, record: false); }
             else CommitTextEdit();
             return;
         }
         if (mode == Mode.None && board.Undo()) cacheDirty = true;
+        hoverText = null;
         Invalidate();
     }
 
@@ -836,6 +922,7 @@ public sealed partial class BoardForm : Form
     {
         CommitTextEdit();
         if (mode == Mode.None && board.Redo()) cacheDirty = true;
+        hoverText = null;
         Invalidate();
     }
 
@@ -1151,7 +1238,7 @@ public sealed partial class BoardForm : Form
 
     void AddStrokePoint(Vector2 dip)
     {
-        if (active == null) return;
+        if (active == null || active.Points.Count >= 200_000) return;
         var w = ScreenToWorld(dip);
         if (w == active.Points[^1]) return;
         active.Points.Add(w);
@@ -1234,6 +1321,15 @@ public sealed partial class BoardForm : Form
                 if (Ink.Area(s) >= crumb * crumb) continue;
                 eraseWorking.Remove(s);
                 s.Geometry?.Dispose();
+            }
+            for (int i = eraseWorking.Count - 1; i >= 0; i--)
+            {
+                if (eraseWorking[i] is not Stroke s || !eraseCopies.Contains(s)) continue;
+                var pieces = Ink.Bake(factory, s);
+                if (pieces.Count == 1 && pieces[0] == s) continue;
+                s.Release();
+                eraseWorking.RemoveAt(i);
+                eraseWorking.InsertRange(i, pieces);
             }
             board.Commit(eraseWorking);
         }
@@ -1324,6 +1420,11 @@ public sealed partial class BoardForm : Form
     void CommitTextEdit()
     {
         if (editing == null) return;
+        if (mode == Mode.ResizeText && resizeOriginal == null)
+        {
+            mode = Mode.None;
+            resizeItem = null;
+        }
         var t = editing;
         var original = editOriginal;
         editing = null;
@@ -1357,7 +1458,11 @@ public sealed partial class BoardForm : Form
     void SetEditText(string text, int newCaret, bool record = true)
     {
         if (editing == null) return;
-        if (record) editHistory.Push((editing.Text, caret));
+        if (record)
+        {
+            editHistory.Add((editing.Text, caret));
+            if (editHistory.Count > 200) editHistory.RemoveAt(0);
+        }
         editing.Text = text;
         caret = Math.Clamp(newCaret, 0, text.Length);
         textInk.Finish(editing);
@@ -1482,7 +1587,9 @@ public sealed partial class BoardForm : Form
             };
             var anchor = new Vector2(b.Left + b.Right, b.Top + b.Bottom) - corner;
             var diagonal = corner - anchor;
+            if (diagonal.LengthSquared() < 1e-6f) return;
             float ratio = Vector2.Dot(w - anchor, diagonal) / diagonal.LengthSquared();
+            if (!float.IsFinite(ratio)) return;
             // Keep the text between 8 and 300 DIPs tall on screen.
             float screenSize = resizeStartFontSize * zoom;
             ratio = Math.Clamp(ratio, 8 / screenSize, 300 / screenSize);

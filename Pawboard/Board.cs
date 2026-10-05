@@ -8,6 +8,9 @@ public abstract class Item
 {
     public uint Color;              // 0xAARRGGBB
     public RectangleF Bounds;       // world space; derived, never saved
+
+    // Frees the item's graphics resources once nothing (board or undo history) can show it again.
+    public abstract void Release();
 }
 
 public sealed class Stroke : Item
@@ -29,6 +32,12 @@ public sealed class Stroke : Item
         Color = Color, Size = Size, Smoothing = Smoothing, Points = Points,
         Erasures = new List<EraseRun>(Erasures), InheritedRuns = Erasures.Count, Bounds = Bounds,
     };
+
+    public override void Release()
+    {
+        Geometry?.Dispose();
+        Geometry = null;
+    }
 }
 
 // One continuous eraser movement over a stroke: a round eraser of Radius dragged through Points.
@@ -52,13 +61,21 @@ public sealed class TextItem : Item
 
     public TextItem Copy() =>
         new() { Color = Color, FontSize = FontSize, Width = Width, Text = Text, Position = Position };
+
+    public override void Release()
+    {
+        Layout?.Dispose();
+        Layout = null;
+    }
 }
 
 // What's on the board, plus undo history. Each change stores the item list before and after, so
 // one undo step can cover anything: a stroke, a whole eraser drag that cut many strokes, a text edit.
+// The app runs all day, so items that drop out of reach (oldest undo steps, cleared redo) have
+// their graphics resources freed.
 public sealed class Board
 {
-    const int MaxUndo = 200;
+    const int MaxUndo = 100;
 
     public readonly List<Item> Items = new();
     readonly List<(Item[] Before, Item[] After)> undo = new();
@@ -89,8 +106,15 @@ public sealed class Board
         Items.Clear();
         Items.AddRange(after);
         undo.Add((before, after.ToArray()));
-        if (undo.Count > MaxUndo) undo.RemoveAt(0);
+
+        var dropped = new List<(Item[] Before, Item[] After)>(redo);
         redo.Clear();
+        if (undo.Count > MaxUndo)
+        {
+            dropped.Add(undo[0]);
+            undo.RemoveAt(0);
+        }
+        ReleaseUnreachable(dropped);
         Changed?.Invoke();
     }
 
@@ -107,5 +131,26 @@ public sealed class Board
         to.Add(edit);
         Changed?.Invoke();
         return true;
+    }
+
+    // Frees items that were only reachable through history steps that are now gone.
+    void ReleaseUnreachable(List<(Item[] Before, Item[] After)> dropped)
+    {
+        if (dropped.Count == 0) return;
+        var reachable = new HashSet<Item>(Items);
+        foreach (var (b, a) in undo) { reachable.UnionWith(b); reachable.UnionWith(a); }
+        foreach (var (b, a) in redo) { reachable.UnionWith(b); reachable.UnionWith(a); }
+        var released = new HashSet<Item>();
+        foreach (var (b, a) in dropped)
+            foreach (var item in b.Concat(a))
+                if (!reachable.Contains(item) && released.Add(item)) item.Release();
+    }
+
+    // Everything, on the way out (e.g. Explorer restarted and the board is rebuilt).
+    public void ReleaseAll()
+    {
+        var all = new HashSet<Item>(Items);
+        foreach (var (b, a) in undo.Concat(redo)) { all.UnionWith(b); all.UnionWith(a); }
+        foreach (var item in all) item.Release();
     }
 }

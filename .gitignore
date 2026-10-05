@@ -10,3 +10,9 @@ obj/
 .vs/
 .vscode/
 *.swp
+
+# Boards and leftovers from testing: personal, never part of the source
+*.pawboard
+*.deskboard
+*.tmp
+board*.json
