@@ -26,6 +26,24 @@ save/open, dark mode, backgrounds and Start with Windows.
 
 It saves by itself and uses no CPU when you're not drawing.
 
+## Controls
+
+| | |
+|---|---|
+| Scroll wheel | Zoom in / out |
+| Middle-drag | Move around (when zoomed in) |
+| Right-drag | Erase (with pen, eraser or text selected) |
+| ↶ ↷ on the toolbar | Undo / redo |
+
+In a text box:
+
+| | |
+|---|---|
+| Enter | New line |
+| Esc | Done |
+| Ctrl+V | Paste |
+| Ctrl+Z | Undo typing |
+| Arrows, Home, End | Move the cursor |
 ## Privacy
 
 No internet access at all. To catch clicks on the desktop it watches the mouse, and it only reads
