@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/icon.png" width="128" alt="Pawboard icon: a blue paw on a dark board with a pink marker squiggle"></p>
+
 # Pawboard 🐾
 
 A whiteboard that lives on your Windows desktop. It sits behind your desktop icons as your

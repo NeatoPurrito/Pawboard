@@ -135,7 +135,7 @@ public sealed partial class BoardForm
         Microsoft.Win32.SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
         ReadIconPositions();
 
-        tray = new NotifyIcon { Text = "Pawboard", Icon = MakeTrayIcon(), Visible = true, ContextMenuStrip = new ContextMenuStrip() };
+        tray = new NotifyIcon { Text = "Pawboard", Icon = PawIcon(SystemInformation.SmallIconSize), Visible = true, ContextMenuStrip = new ContextMenuStrip() };
         tray.ContextMenuStrip.Items.Add("Clear board…", null, (_, _) => ConfirmClear());
         tray.ContextMenuStrip.Items.Add(new ToolStripSeparator());
         tray.ContextMenuStrip.Items.Add("Exit Pawboard", null, (_, _) => { ExitRequested = true; Close(); });
@@ -450,23 +450,12 @@ public sealed partial class BoardForm
         return combined.Length == letter.Length ? combined : accent + letter;
     }
 
-    // A tiny whiteboard for the tray: a white board with a blue squiggle.
-    static Icon MakeTrayIcon()
+    // The paw icon (pawboard.ico, built into the exe) at a given size.
+    static Icon PawIcon(Size size)
     {
-        using var bmp = new Bitmap(32, 32);
-        using (var g = Graphics.FromImage(bmp))
-        {
-            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-            using var board = new SolidBrush(Color.FromArgb(0xF8, 0xF7, 0xF4));
-            using var frame = new Pen(Color.FromArgb(0x55, 0x5D, 0x6A), 2.5f);
-            g.FillRectangle(board, 3, 5, 26, 21);
-            g.DrawRectangle(frame, 3, 5, 26, 21);
-            using var ink = new Pen(Color.FromArgb(0x19, 0x71, 0xC2), 3f) { StartCap = System.Drawing.Drawing2D.LineCap.Round, EndCap = System.Drawing.Drawing2D.LineCap.Round };
-            g.DrawBezier(ink, 8, 19, 12, 9, 17, 23, 24, 11);
-        }
-        return Icon.FromHandle(bmp.GetHicon());
+        using var stream = typeof(BoardForm).Assembly.GetManifestResourceStream("pawboard.ico")!;
+        return new Icon(stream, size);
     }
-
     // ---------- Win32 ----------
 
     delegate void WinEventProc(nint hook, uint eventType, nint hwnd, int idObject, int idChild, uint thread, uint time);

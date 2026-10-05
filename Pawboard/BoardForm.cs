@@ -146,6 +146,7 @@ public sealed partial class BoardForm : Form
         }
         else
         {
+            Icon = PawIcon(new Size(32, 32));
             StartPosition = FormStartPosition.CenterScreen;
             ClientSize = new System.Drawing.Size(LogicalToDeviceUnits(1280), LogicalToDeviceUnits(800));
         }

@@ -9,7 +9,13 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <!-- Real pixels on high-DPI screens; otherwise Windows scales a blurry bitmap of the board. -->
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <ApplicationIcon>pawboard.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The same paw for the tray and the window (the exe gets it from ApplicationIcon). -->
+    <EmbeddedResource Include="pawboard.ico" LogicalName="pawboard.ico" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Vortice.Direct2D1" Version="3.8.3" />
