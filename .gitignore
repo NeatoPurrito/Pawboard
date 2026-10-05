@@ -1,0 +1,12 @@
+# Build output
+bin/
+obj/
+*.user
+
+# Runtime files written next to the exe
+*.log
+
+# Editors
+.vs/
+.vscode/
+*.swp

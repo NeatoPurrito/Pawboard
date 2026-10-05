@@ -1,0 +1,111 @@
+using System.Numerics;
+using Vortice.Direct2D1;
+using Vortice.DirectWrite;
+
+namespace Pawboard;
+
+public abstract class Item
+{
+    public uint Color;              // 0xAARRGGBB
+    public RectangleF Bounds;       // world space; derived, never saved
+}
+
+public sealed class Stroke : Item
+{
+    public float Size;              // world units
+    public float Smoothing;         // world units: how far along the line points blend with neighbours (0 = none)
+    public List<Vector2> Points = new();   // input points in world space
+    // Eraser paths that went over this stroke; their shape is cut out of the line.
+    public List<EraseRun> Erasures = new();
+    // How many of Erasures came from the stroke this was copied from. Those are shared, so never modified.
+    public int InheritedRuns;
+
+    // Derived from Points and Erasures; rebuilt on load, never saved.
+    public ID2D1PathGeometry? Geometry;
+
+    // A copy to erase into. Points never change after drawing, so they're shared.
+    public Stroke CopyForErasing() => new()
+    {
+        Color = Color, Size = Size, Smoothing = Smoothing, Points = Points,
+        Erasures = new List<EraseRun>(Erasures), InheritedRuns = Erasures.Count, Bounds = Bounds,
+    };
+}
+
+// One continuous eraser movement over a stroke: a round eraser of Radius dragged through Points.
+public sealed class EraseRun
+{
+    public float Radius;
+    public List<Vector2> Points = new();
+}
+
+public sealed class TextItem : Item
+{
+    public string Text = "";
+    public Vector2 Position;        // world space, top-left
+    public float FontSize;          // world units
+    public float Width;             // world units; 0 = as wide as the text, otherwise lines wrap at this width
+
+    // Laid out at TextInk.ReferenceSize and scaled when drawn; rebuilt on load, never saved.
+    public IDWriteTextLayout? Layout;
+
+    public float Scale => FontSize / TextInk.ReferenceSize;
+
+    public TextItem Copy() =>
+        new() { Color = Color, FontSize = FontSize, Width = Width, Text = Text, Position = Position };
+}
+
+// What's on the board, plus undo history. Each change stores the item list before and after, so
+// one undo step can cover anything: a stroke, a whole eraser drag that cut many strokes, a text edit.
+public sealed class Board
+{
+    const int MaxUndo = 200;
+
+    public readonly List<Item> Items = new();
+    readonly List<(Item[] Before, Item[] After)> undo = new();
+    readonly List<(Item[] Before, Item[] After)> redo = new();
+
+    public event Action? Changed;
+
+    public bool CanUndo => undo.Count > 0;
+    public bool CanRedo => redo.Count > 0;
+
+    public void Add(Item item) => Commit([.. Items, item]);
+
+    // Swap one item for another in the same spot (or remove it when replacement is null).
+    public void Replace(Item old, Item? replacement)
+    {
+        var after = new List<Item>(Items.Count);
+        foreach (var i in Items)
+        {
+            if (i != old) after.Add(i);
+            else if (replacement != null) after.Add(replacement);
+        }
+        Commit(after);
+    }
+
+    public void Commit(List<Item> after)
+    {
+        var before = Items.ToArray();
+        Items.Clear();
+        Items.AddRange(after);
+        undo.Add((before, after.ToArray()));
+        if (undo.Count > MaxUndo) undo.RemoveAt(0);
+        redo.Clear();
+        Changed?.Invoke();
+    }
+
+    public bool Undo() => Step(undo, redo, back: true);
+    public bool Redo() => Step(redo, undo, back: false);
+
+    bool Step(List<(Item[] Before, Item[] After)> from, List<(Item[] Before, Item[] After)> to, bool back)
+    {
+        if (from.Count == 0) return false;
+        var edit = from[^1];
+        from.RemoveAt(from.Count - 1);
+        Items.Clear();
+        Items.AddRange(back ? edit.Before : edit.After);
+        to.Add(edit);
+        Changed?.Invoke();
+        return true;
+    }
+}
