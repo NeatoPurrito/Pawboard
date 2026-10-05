@@ -23,10 +23,20 @@ public sealed partial class BoardForm
     readonly List<FileSystemWatcher> desktopWatchers = new();
     readonly System.Windows.Forms.Timer iconRefresh = new() { Interval = 400 };
 
-    MouseButtons hookCapture;       // a press the board claimed; its release is the board's too
+    // The hook fields below are used on the hook thread (see InputHooks); the UI thread only
+    // resets them. Everything the hook thread reads from the board is a plain field it can read
+    // at any time; actual changes to the board are always posted to the UI thread.
+    volatile MouseButtons hookCapture;   // a press the board claimed; its release is the board's too
     // A right press on the board is held back until it's clear what it is: dragging erases,
     // letting go without dragging hands the click to Windows so the desktop menu still opens.
-    bool rightUndecided;
+    volatile bool rightUndecided;
+    nint boardWindow;                    // this window's handle, for the hook thread
+    float hookDpiScale = 1;              // DPI scale, for the hook thread
+
+    // Mouse moves arrive up to 1000 times a second. They're queued and handled in one go on the
+    // UI thread: every point while drawing, only the latest one for panning and hovering.
+    readonly System.Collections.Concurrent.ConcurrentQueue<Point> moveQueue = new();
+    int moveDrainPosted;
     Point rightPressScreen;
     Point rightPressClient;
     bool cursorOnDesktop;
@@ -75,6 +85,8 @@ public sealed partial class BoardForm
     void AttachToDesktop()
     {
         attached = Desktop.AttachBehindIcons(Handle);
+        boardWindow = Handle;
+        hookDpiScale = DpiScale;
         Log.Write($"attach: {attached}, window 0x{Handle:X}, size {ClientSize}, dpi {DeviceDpi}, {Desktop.Describe(Handle)}");
         if (!attached)
         {
@@ -85,7 +97,13 @@ public sealed partial class BoardForm
             return;
         }
 
-        hooks = new InputHooks { Mouse = OnHookMouse, Keyboard = OnHookKeyboard };
+        hooks = new InputHooks
+        {
+            Mouse = OnHookMouse,
+            Keyboard = OnHookKeyboard,
+            // Typing state starts fresh with each text box (runs on the hook thread, like its users).
+            KeyboardStarted = () => { pendingDeadKey = null; claimedKeys.Clear(); },
+        };
         hooks.MouseEnabled = !Desktop.IsFullscreen(GetForegroundWindow());
 
         // Switch the mouse hook off while a fullscreen game or video is in front.
@@ -209,8 +227,6 @@ public sealed partial class BoardForm
     {
         if (hooks == null) return;
         hooks.KeyboardEnabled = editing != null;
-        pendingDeadKey = null;
-        claimedKeys.Clear();
     }
 
     void RefreshIconsSoon()
@@ -230,13 +246,31 @@ public sealed partial class BoardForm
 
     bool OverIcon(Point screen) => iconRects.Any(r => r.Contains(screen));
 
+    void QueueMove(Point client)
+    {
+        moveQueue.Enqueue(client);
+        if (Interlocked.Exchange(ref moveDrainPosted, 1) == 0) BeginInvoke(DrainMoves);
+    }
+
+    void DrainMoves()
+    {
+        Volatile.Write(ref moveDrainPosted, 0);
+        Point? latest = null;
+        while (moveQueue.TryDequeue(out var p))
+        {
+            if (mode == Mode.Draw) PointerMove(p);   // a stroke wants every point
+            else latest = p;
+        }
+        if (latest is { } last) PointerMove(last);
+    }
+
     // ---------- mouse ----------
 
     bool OnHookMouse(int message, Point screen, int wheel)
     {
         // Handlers run later on the UI thread (BeginInvoke); this only decides who gets the event.
         // Plain moves are never claimed, or the pointer itself would stop moving.
-        var client = PointToClient(screen);
+        var client = Desktop.ToClient(boardWindow, screen);
 
         // A press of the button we think is still held means its release was missed somehow:
         // drop the old gesture rather than keep claiming clicks.
@@ -264,7 +298,7 @@ public sealed partial class BoardForm
                     return false;
                 }
                 case InputHooks.WM_MOUSEMOVE:
-                    BeginInvoke(() => PointerMove(client));
+                    QueueMove(client);
                     return false;
                 case InputHooks.WM_RBUTTONUP when hookCapture == MouseButtons.Right && rightUndecided:
                     // Never dragged: it was a plain right-click. Hand it to Windows for the desktop menu.
@@ -291,7 +325,7 @@ public sealed partial class BoardForm
                 // Only the eraser circle and text hover boxes need to follow an idle mouse.
                 if (tool is not (Tool.Eraser or Tool.Text)) return false;
                 bool onDesktop = Desktop.IsDesktopAt(screen);
-                if (onDesktop) BeginInvoke(() => PointerMove(client));
+                if (onDesktop) QueueMove(client);
                 else if (cursorOnDesktop) BeginInvoke(PointerLeave);
                 cursorOnDesktop = onDesktop;
                 return false;
@@ -305,13 +339,13 @@ public sealed partial class BoardForm
                     if (menuOpen) BeginInvoke(CloseMenu);
                     return false;
                 }
-                var dip = ToDip(client);
+                var dip = new System.Numerics.Vector2(client.X, client.Y) / hookDpiScale;
                 // While the menu is open, any click on the desktop is the board's (it closes the menu).
                 bool onToolbar = toolbarRect.Contains(dip.X, dip.Y) || menuOpen;
                 if (!onToolbar && (tool == Tool.Desktop || OverIcon(screen)))
                 {
                     if (editing != null) BeginInvoke(CommitTextEdit);
-                    if (tool == Tool.Desktop) RefreshIconsSoon();   // icons may get dragged around
+                    if (tool == Tool.Desktop) BeginInvoke(RefreshIconsSoon);   // icons may get dragged around
                     return false;
                 }
                 hookCapture = MouseButtons.Left;
@@ -331,7 +365,7 @@ public sealed partial class BoardForm
                 if (menuOpen) BeginInvoke(CloseMenu);
                 // In the Desktop tool, on icons and on apps, right-click is Windows' as always.
                 if (tool == Tool.Desktop || !Desktop.IsDesktopAt(screen) || OverIcon(screen)) return false;
-                var dip = ToDip(client);
+                var dip = new System.Numerics.Vector2(client.X, client.Y) / hookDpiScale;
                 if (toolbarRect.Contains(dip.X, dip.Y)) return false;
                 hookCapture = MouseButtons.Right;
                 rightUndecided = true;

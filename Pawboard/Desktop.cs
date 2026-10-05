@@ -49,6 +49,14 @@ static class Desktop
         return true;
     }
 
+    // A screen point in a window's client pixels. Plain Win32, so it's safe from any thread.
+    public static Point ToClient(nint hwnd, Point screen)
+    {
+        var p = new POINT { X = screen.X, Y = screen.Y };
+        ScreenToClient(hwnd, ref p);
+        return new Point(p.X, p.Y);
+    }
+
     // For checking it's still set up right (logged when the board starts).
     public static string Describe(nint hwnd) =>
         $"parent 0x{GetParent(hwnd):X}, style 0x{GetWindowLongPtr(hwnd, -16):X}, exstyle 0x{GetWindowLongPtr(hwnd, -20):X}";

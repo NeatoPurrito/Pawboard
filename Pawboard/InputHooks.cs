@@ -6,52 +6,93 @@ namespace Pawboard;
 // layer, so the board watches input system-wide and claims only what's meant for it: clicks on
 // empty desktop while a drawing tool is picked, and keys while a text box is open.
 //
-// Handlers must return fast (Windows drops a hook that stalls), so they only decide whether to
-// claim an event; the actual work is posted to the UI thread. Both hooks vanish with the process.
+// The hooks live on their own thread. Windows holds back every mouse event (the real pointer
+// included) until a hook has answered, so the answer must never wait for the board to finish
+// drawing. Handlers here only decide whether to claim an event; the actual work is posted to the
+// UI thread. Both hooks vanish with the process.
 sealed class InputHooks : IDisposable
 {
     public const int WM_MOUSEMOVE = 0x200, WM_LBUTTONDOWN = 0x201, WM_LBUTTONUP = 0x202,
         WM_RBUTTONDOWN = 0x204, WM_RBUTTONUP = 0x205, WM_MBUTTONDOWN = 0x207, WM_MBUTTONUP = 0x208,
         WM_MOUSEWHEEL = 0x20A, WM_KEYDOWN = 0x100, WM_KEYUP = 0x101, WM_SYSKEYDOWN = 0x104, WM_SYSKEYUP = 0x105;
 
-    // Returns true to claim the event (it then never reaches the desktop or any app).
+    // Called on the hook thread. Return true to claim the event (it then never reaches the desktop or any app).
     public Func<int, Point, int, bool>? Mouse;              // message, screen point, wheel delta
     public Func<int, KBDLLHOOKSTRUCT, bool>? Keyboard;       // message, key info
+    public Action? KeyboardStarted;                          // on the hook thread, when the keyboard hook goes on
 
     readonly HookProc mouseProc, keyboardProc;               // kept alive: Windows holds pointers to them
-    nint mouseHook, keyboardHook;
+    nint mouseHook, keyboardHook;                            // only touched on the hook thread
+    volatile bool mouseWanted, keyboardWanted;               // what the UI asked for; the hook thread makes it so
+
+    readonly Thread thread;
+    uint threadId;
+    const uint WM_APP_SYNC = 0x8001, WM_APP_QUIT = 0x8002;
 
     public InputHooks()
     {
         mouseProc = OnMouse;
         keyboardProc = OnKeyboard;
+        using var ready = new ManualResetEventSlim();
+        thread = new Thread(() => Run(ready)) { IsBackground = true, Name = "Pawboard input" };
+        thread.Start();
+        ready.Wait();
     }
 
     public bool MouseEnabled
     {
-        get => mouseHook != 0;
+        get => mouseWanted;
         set
         {
-            if (value == MouseEnabled) return;
-            if (value) mouseHook = SetWindowsHookEx(WH_MOUSE_LL, mouseProc, GetModuleHandle(null), 0);
-            else { UnhookWindowsHookEx(mouseHook); mouseHook = 0; }
+            if (value == mouseWanted) return;
+            mouseWanted = value;
+            PostThreadMessage(threadId, WM_APP_SYNC, 0, 0);
         }
     }
 
     public bool KeyboardEnabled
     {
-        get => keyboardHook != 0;
+        get => keyboardWanted;
         set
         {
-            if (value == KeyboardEnabled) return;
-            if (value) keyboardHook = SetWindowsHookEx(WH_KEYBOARD_LL, keyboardProc, GetModuleHandle(null), 0);
-            else { UnhookWindowsHookEx(keyboardHook); keyboardHook = 0; }
+            if (value == keyboardWanted) return;
+            keyboardWanted = value;
+            PostThreadMessage(threadId, WM_APP_SYNC, 0, 0);
         }
+    }
+
+    void Run(ManualResetEventSlim ready)
+    {
+        threadId = GetCurrentThreadId();
+        PeekMessage(out _, 0, 0, 0, 0);   // gives this thread a message queue, so it can be posted to
+        ready.Set();
+        while (GetMessage(out var msg, 0, 0, 0) > 0)
+        {
+            if (msg.message == WM_APP_QUIT) break;
+            if (msg.message == WM_APP_SYNC) { Sync(); continue; }
+            TranslateMessage(ref msg);
+            DispatchMessage(ref msg);
+        }
+        mouseWanted = keyboardWanted = false;
+        Sync();
+    }
+
+    // Puts the hooks on or off to match what was asked for. Runs on the hook thread.
+    void Sync()
+    {
+        if (mouseWanted && mouseHook == 0) mouseHook = SetWindowsHookEx(WH_MOUSE_LL, mouseProc, GetModuleHandle(null), 0);
+        if (!mouseWanted && mouseHook != 0) { UnhookWindowsHookEx(mouseHook); mouseHook = 0; }
+        if (keyboardWanted && keyboardHook == 0)
+        {
+            KeyboardStarted?.Invoke();
+            keyboardHook = SetWindowsHookEx(WH_KEYBOARD_LL, keyboardProc, GetModuleHandle(null), 0);
+        }
+        if (!keyboardWanted && keyboardHook != 0) { UnhookWindowsHookEx(keyboardHook); keyboardHook = 0; }
     }
 
     nint OnMouse(int code, nint wParam, nint lParam)
     {
-        if (code >= 0 && Mouse != null)
+        if (code >= 0 && Mouse != null && mouseWanted)
         {
             var info = Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam);
             // Clicks made by programs (including the right-click the board hands back to Windows)
@@ -59,27 +100,38 @@ sealed class InputHooks : IDisposable
             const uint LLMHF_INJECTED = 1;
             if ((info.flags & LLMHF_INJECTED) != 0) return CallNextHookEx(0, code, wParam, lParam);
             int wheel = (short)(info.mouseData >> 16);
-            if (Mouse((int)wParam, new Point(info.pt.X, info.pt.Y), wheel)) return 1;
+            if (Ask(() => Mouse((int)wParam, new Point(info.pt.X, info.pt.Y), wheel))) return 1;
         }
         return CallNextHookEx(0, code, wParam, lParam);
     }
 
     nint OnKeyboard(int code, nint wParam, nint lParam)
     {
-        if (code >= 0 && Keyboard != null)
+        if (code >= 0 && Keyboard != null && keyboardWanted)
         {
             var info = Marshal.PtrToStructure<KBDLLHOOKSTRUCT>(lParam);
-            if (Keyboard((int)wParam, info)) return 1;
+            if (Ask(() => Keyboard((int)wParam, info))) return 1;
         }
         return CallNextHookEx(0, code, wParam, lParam);
     }
 
-    public void Dispose()
+    // A handler that throws (say, the board is closing) must never take input down with it:
+    // the event just goes on to Windows as if the board weren't there.
+    static bool Ask(Func<bool> handler)
     {
-        MouseEnabled = false;
-        KeyboardEnabled = false;
+        try { return handler(); }
+        catch (Exception ex)
+        {
+            Log.Write($"input handler error: {ex.GetType().Name}: {ex.Message}");
+            return false;
+        }
     }
 
+    public void Dispose()
+    {
+        PostThreadMessage(threadId, WM_APP_QUIT, 0, 0);
+        thread.Join(1000);
+    }
     // Turns a key press into the text it types, using the keyboard layout of the window in front.
     // Dead keys (´ ` ^ ~ ¨ on many layouts) are combined with the next letter by the caller.
     public static string Translate(KBDLLHOOKSTRUCT key, out bool deadKey)
@@ -144,6 +196,15 @@ sealed class InputHooks : IDisposable
     [DllImport("user32.dll")] static extern nint GetForegroundWindow();
     [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(nint hwnd, out uint pid);
     [DllImport("user32.dll")] static extern nint GetKeyboardLayout(uint thread);
+    [StructLayout(LayoutKind.Sequential)]
+    struct MSG { public nint hwnd; public uint message; public nint wParam, lParam; public uint time; public Desktop.POINT pt; }
+
+    [DllImport("user32.dll")] static extern int GetMessage(out MSG msg, nint hwnd, uint min, uint max);
+    [DllImport("user32.dll")] static extern bool PeekMessage(out MSG msg, nint hwnd, uint min, uint max, uint remove);
+    [DllImport("user32.dll")] static extern bool TranslateMessage(ref MSG msg);
+    [DllImport("user32.dll")] static extern nint DispatchMessage(ref MSG msg);
+    [DllImport("user32.dll")] static extern bool PostThreadMessage(uint thread, uint msg, nint wParam, nint lParam);
+    [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     static extern int ToUnicodeEx(uint vk, uint scan, byte[] state, [Out] char[] buffer, int size, uint flags, nint layout);
 }

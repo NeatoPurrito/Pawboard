@@ -287,6 +287,7 @@ public sealed partial class BoardForm : Form
     protected override void OnDpiChanged(DpiChangedEventArgs e)
     {
         base.OnDpiChanged(e);
+        hookDpiScale = DpiScale;
         DiscardDevice();
         Invalidate();
     }
@@ -826,14 +827,16 @@ public sealed partial class BoardForm : Form
 
         if (zooming)
         {
+            var (lastZoom, lastOffset) = (zoom, offset);
             zoom += (targetZoom - zoom) * (1 - MathF.Exp(-dt * 22));
             if (MathF.Abs(zoom - targetZoom) / targetZoom < 0.002f) { zoom = targetZoom; zooming = false; }
             offset = zoomAnchorScreen - zoomAnchorWorld * zoom;
             ClampView();
-            cacheDirty = true;
+            if (zoom != lastZoom || offset != lastOffset) cacheDirty = true;
         }
         if (coasting)
         {
+            var lastOffset = offset;
             var moved = offset + panVelocity * dt;
             offset = moved;
             ClampView();
@@ -842,7 +845,7 @@ public sealed partial class BoardForm : Form
             if (offset.Y != moved.Y) panVelocity.Y = 0;
             panVelocity *= MathF.Exp(-dt * 5.5f);
             if (panVelocity.Length() < 10) coasting = false;
-            cacheDirty = true;
+            if (offset != lastOffset) cacheDirty = true;
         }
     }
 
@@ -942,13 +945,18 @@ public sealed partial class BoardForm : Form
                 Invalidate();
                 break;
             case Mode.Pan:
+            {
+                var lastOffset = offset;
                 offset += cursor - panLast;
                 ClampView();
                 panLast = cursor;
                 RecordPanSample();
+                // Pressed against an edge: nothing moved, so there's nothing to redraw.
+                if (offset == lastOffset) break;
                 cacheDirty = true;
                 Invalidate();
                 break;
+            }
             case Mode.PressText:
                 // Only start moving after a few pixels, so a slightly shaky click still opens the text.
                 if (Vector2.Distance(cursor, pressStart) > 4) BeginMoveText();
@@ -997,7 +1005,10 @@ public sealed partial class BoardForm : Form
         if (mode != Mode.None && mode != Mode.Pan) return;
         var p = ToDip(location);
         coasting = false;
-        targetZoom = Math.Clamp(targetZoom * MathF.Pow(1.2f, delta / 120f), MinZoom, MaxZoom);
+        float next = Math.Clamp(targetZoom * MathF.Pow(1.2f, delta / 120f), MinZoom, MaxZoom);
+        // Already at 100% (or fully zoomed in) and scrolling further: nothing to do.
+        if (next == targetZoom && !zooming) return;
+        targetZoom = next;
         zoomAnchorScreen = p;
         zoomAnchorWorld = ScreenToWorld(p);
         zooming = true;
