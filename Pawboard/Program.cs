@@ -11,6 +11,13 @@ static class Program
             RenderTest.Run(args[1]);
             return;
         }
+        // Renders a board file as the start view shows it, to a PNG sized like the whole desktop.
+        if (args.Length == 3 && args[0] == "--render-board")
+        {
+            var screen = SystemInformation.VirtualScreen;
+            RenderTest.RenderBoard(args[1], args[2], screen.Width, screen.Height);
+            return;
+        }
         // Writes what the app can see of the desktop (wallpaper layer, icon positions) to a file.
         if (args.Length == 2 && args[0] == "--desktop-info")
         {

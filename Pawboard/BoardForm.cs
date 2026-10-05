@@ -28,7 +28,8 @@ public sealed partial class BoardForm : Form
     // Screen DIPs: mouse wiggles shorter than about this get ironed out of the line. Measured on
     // screen, so it feels the same at every zoom.
     const float PenSmoothing = 2f;
-    const float MinZoom = 0.1f, MaxZoom = 8f;
+    // 100% is as far out as it goes: the board is exactly your screen (see BoardForm.Bounds.cs).
+    const float MinZoom = 1f, MaxZoom = 8f;
     const string IconFont = "Segoe Fluent Icons";
     const string PenIcon = "\uE70F", EraserIcon = "\uE75C", TextIcon = "\uE8D2", UndoIcon = "\uE7A7", RedoIcon = "\uE7A6";
     const string DesktopIcon = "\uE8B0";
@@ -161,7 +162,7 @@ public sealed partial class BoardForm : Form
         CreateMenuFonts();
 
         LoadBoard();
-        board.Changed += () => { boundsDirty = true; saveTimer.Stop(); saveTimer.Start(); };
+        board.Changed += () => { saveTimer.Stop(); saveTimer.Start(); };
         saveTimer.Tick += (_, _) => { saveTimer.Stop(); SaveBoard(); };
         caretTimer.Tick += (_, _) => { caretOn = !caretOn; Invalidate(); };
     }
@@ -275,7 +276,6 @@ public sealed partial class BoardForm : Form
     protected override void OnResize(EventArgs e)
     {
         base.OnResize(e);
-        boundsDirty = true;   // the board's size follows the screen's
         if (rt == null || ClientSize.Width <= 0 || ClientSize.Height <= 0) return;
         rt.Resize(new SizeI(ClientSize.Width, ClientSize.Height));
         cache?.Dispose(); cache = null;
@@ -734,9 +734,8 @@ public sealed partial class BoardForm : Form
         zooming = coasting = false;
         offset = new Vector2(data.ViewX, data.ViewY);
         zoom = targetZoom = Math.Clamp(data.Zoom, MinZoom, MaxZoom);
-        boundsDirty = true;
-        zoom = targetZoom = Math.Max(zoom, LowestZoom);
         ClampView();
+
         hoverText = null;
         cacheDirty = true;
         Invalidate();
@@ -998,7 +997,7 @@ public sealed partial class BoardForm : Form
         if (mode != Mode.None && mode != Mode.Pan) return;
         var p = ToDip(location);
         coasting = false;
-        targetZoom = Math.Clamp(targetZoom * MathF.Pow(1.2f, delta / 120f), LowestZoom, MaxZoom);
+        targetZoom = Math.Clamp(targetZoom * MathF.Pow(1.2f, delta / 120f), MinZoom, MaxZoom);
         zoomAnchorScreen = p;
         zoomAnchorWorld = ScreenToWorld(p);
         zooming = true;

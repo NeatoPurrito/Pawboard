@@ -81,9 +81,10 @@ public static class BoardStore
     {
         TakeOverOldFolder();
         if (!File.Exists(FilePath)) return new SavedBoard();
+        SavedBoard data;
         try
         {
-            return ReadChecked(FilePath);
+            data = ReadChecked(FilePath);
         }
         catch (Exception)
         {
@@ -92,12 +93,24 @@ public static class BoardStore
             catch (IOException) { SavingBlocked = true; }
             return new SavedBoard();
         }
+        // Rescaling an old zoomed-out board: keep the file as it was, in case anything looks off.
+        if (AdoptSavedView(data))
+        {
+            try { File.Copy(FilePath, Path.Combine(Folder, $"board.backup-{DateTime.Now:yyyyMMdd-HHmmss}.json")); }
+            catch (IOException) { }
+        }
+        return data;
     }
 
     // A board file you picked yourself (Open button). Null if it can't be read; the file is never touched.
     public static SavedBoard? ReadFile(string path)
     {
-        try { return ReadChecked(path); }
+        try
+        {
+            var data = ReadChecked(path);
+            AdoptSavedView(data);
+            return data;
+        }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException) { return null; }
     }
 
@@ -114,6 +127,48 @@ public static class BoardStore
         if (!Coordinate(data.ViewX) || !Coordinate(data.ViewY)) data.ViewX = data.ViewY = 0;
         if (!float.IsFinite(data.Zoom) || data.Zoom <= 0) data.Zoom = 1;
         return data;
+    }
+
+    // Boards from before the board was fixed to the screen could be saved zoomed out. Make the
+    // saved view the 100% start view: everything keeps its place on screen, at the right scale.
+    // Returns true if anything changed.
+    static bool AdoptSavedView(SavedBoard data)
+    {
+        float zoom = data.Zoom;
+        if (zoom >= 1) return false;
+        var offset = new Vector2(data.ViewX, data.ViewY);
+        foreach (var item in data.Items)
+        {
+            if (item.Kind == "text")
+            {
+                var p = new Vector2(item.X, item.Y) * zoom + offset;
+                (item.X, item.Y) = (p.X, p.Y);
+                item.FontSize *= zoom;
+                item.Width *= zoom;
+                continue;
+            }
+            Transform(item.Points, zoom, offset);
+            item.Size *= zoom;
+            item.Smoothing *= zoom;
+            foreach (var run in item.Erasures ?? [])
+            {
+                Transform(run.Points, zoom, offset);
+                run.Radius *= zoom;
+            }
+        }
+        data.ViewX = data.ViewY = 0;
+        data.Zoom = 1;
+        return true;
+    }
+
+    static void Transform(float[]? values, float zoom, Vector2 offset)
+    {
+        if (values == null) return;
+        for (int i = 0; i + 1 < values.Length; i += 2)
+        {
+            values[i] = values[i] * zoom + offset.X;
+            values[i + 1] = values[i + 1] * zoom + offset.Y;
+        }
     }
 
     static bool Coordinate(float v) => float.IsFinite(v) && MathF.Abs(v) <= MaxCoordinate;

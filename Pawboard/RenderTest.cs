@@ -162,6 +162,46 @@ static class RenderTest
         SavePng(bitmap, outPath);
     }
 
+    // Renders a board file the way the start view (100%) shows it, in dark mode, to a PNG.
+    // For checking boards without opening a window. Reads the file; never changes it.
+    public static void RenderBoard(string boardPath, string outPath, int width, int height)
+    {
+        var data = BoardStore.ReadFile(boardPath) ?? throw new InvalidDataException("not a readable board");
+        using var factory = D2D1.D2D1CreateFactory<ID2D1Factory>();
+        using var dwrite = DWrite.DWriteCreateFactory<IDWriteFactory>();
+        using var textInk = new TextInk(dwrite);
+        using var wic = new IWICImagingFactory();
+        using var bitmap = wic.CreateBitmap((uint)width, (uint)height, Vortice.WIC.PixelFormat.Format32bppPBGRA, BitmapCreateCacheOption.CacheOnLoad);
+        using var rt = factory.CreateWicBitmapRenderTarget(bitmap, new RenderTargetProperties());
+        using var brush = rt.CreateSolidColorBrush(new Color4(0, 0, 0, 1));
+        rt.BeginDraw();
+        rt.Clear(Theme.Dark.Background);
+        rt.Transform = System.Numerics.Matrix3x2.CreateScale(data.Zoom) * System.Numerics.Matrix3x2.CreateTranslation(data.ViewX, data.ViewY);
+        var view = rt.Transform;
+        foreach (var saved in data.Items)
+        {
+            var item = BoardStore.ToItem(saved);
+            if (item == null) continue;
+            brush.Color = Theme.Argb(Theme.Dark.Display(item.Color));
+            switch (item)
+            {
+                case Stroke s:
+                    Ink.Finish(factory, s);
+                    if (s.Geometry != null) rt.FillGeometry(s.Geometry, brush);
+                    s.Geometry?.Dispose();
+                    break;
+                case TextItem t:
+                    textInk.Finish(t);
+                    rt.Transform = System.Numerics.Matrix3x2.CreateScale(t.Scale) * System.Numerics.Matrix3x2.CreateTranslation(t.Position) * view;
+                    rt.DrawTextLayout(Vector2.Zero, t.Layout!, brush);
+                    rt.Transform = view;
+                    break;
+            }
+        }
+        rt.EndDraw();
+        SavePng(bitmap, outPath, width, height);
+    }
+
     // Walks a path at `speed` px/s, sampling at 1000 Hz and rounding to the pixel grid like a mouse.
     static List<Vector2> Mouse(Func<float, Vector2> path, float duration, float speed, float tremor = 0, bool dedupe = true)
     {
@@ -221,13 +261,13 @@ static class RenderTest
         return new Vector2(x0 + t * 440 - MathF.Cos(a) * 14, y0 + y);
     }
 
-    static unsafe void SavePng(IWICBitmap bitmap, string path)
+    static unsafe void SavePng(IWICBitmap bitmap, string path, int width = Width, int height = Height)
     {
-        using var bmp = new Bitmap(Width, Height, System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
-        var data = bmp.LockBits(new Rectangle(0, 0, Width, Height), ImageLockMode.WriteOnly, bmp.PixelFormat);
+        using var bmp = new Bitmap(width, height, System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
+        var data = bmp.LockBits(new Rectangle(0, 0, width, height), ImageLockMode.WriteOnly, bmp.PixelFormat);
         try
         {
-            bitmap.CopyPixels((uint)data.Stride, (uint)(data.Stride * Height), data.Scan0);
+            bitmap.CopyPixels((uint)data.Stride, (uint)(data.Stride * height), data.Scan0);
         }
         finally
         {
