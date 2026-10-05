@@ -27,7 +27,7 @@ It saves by itself and uses no CPU when you're not drawing.
 ## Privacy
 
 No internet access at all. To catch clicks on the desktop it watches the mouse, and it only reads
-the keyboard while you're typing in one of its text boxes. Nothing is logged. Your board is saved in
+the keyboard while you're typing in one of its text boxes. Nothing you draw or type is logged. Your board is saved in
 `%LOCALAPPDATA%\Pawboard`.
 
 ## Build it yourself
