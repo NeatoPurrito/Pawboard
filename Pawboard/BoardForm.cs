@@ -766,7 +766,7 @@ public sealed partial class BoardForm : Form
         brush.Color = menuOpen ? Colors.Accent : Colors.Icon;
         r.DrawText(MenuIcon, iconFont, ToDRect(menuIcon), brush);
         menuButtonRect = new RectangleF(cx, y, toolW, h);
-        toolbarButtons.Add((menuButtonRect, () => { menuOpen = !menuOpen; Invalidate(); }));
+        toolbarButtons.Add((menuButtonRect, ToggleMenu));
     }
 
     void Divider(ID2D1RenderTarget r, ref float cx, float y, float h, float gap)

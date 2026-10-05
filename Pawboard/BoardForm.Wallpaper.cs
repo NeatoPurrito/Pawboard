@@ -137,6 +137,8 @@ public sealed partial class BoardForm
             desktopWatchers.Add(watcher);
         }
         Microsoft.Win32.SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
+        // If Pawboard was moved since Start with Windows was switched on, keep the shortcut working.
+        Autostart.RepairIfBroken();
         ReadIconPositions();
 
         tray = new NotifyIcon { Text = "Pawboard", Icon = PawIcon(SystemInformation.SmallIconSize), Visible = true, ContextMenuStrip = new ContextMenuStrip() };

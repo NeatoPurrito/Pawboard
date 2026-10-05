@@ -11,6 +11,17 @@ static class Program
             RenderTest.Run(args[1]);
             return;
         }
+        // Makes and reads back a Start-with-Windows shortcut in the given folder (not the real Startup folder).
+        if (args.Length == 2 && args[0] == "--shortcut-test")
+        {
+            Autostart.Set(true, args[1]);
+            var target = Autostart.Read(Path.Combine(args[1], "Pawboard.lnk"));
+            bool on = Autostart.IsOn(args[1]);
+            Autostart.Set(false, args[1]);
+            File.WriteAllLines(Path.Combine(args[1], "result.txt"),
+                [$"created: {on}", $"points at: {target}", $"matches this exe: {string.Equals(target, Environment.ProcessPath, StringComparison.OrdinalIgnoreCase)}", $"removed again: {!Autostart.IsOn(args[1])}"]);
+            return;
+        }
         // Checks that erased ink is really removed (see RenderTest.RunBakeTest).
         if (args.Length == 2 && args[0] == "--bake-test")
         {

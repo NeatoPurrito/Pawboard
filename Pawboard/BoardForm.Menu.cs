@@ -91,7 +91,7 @@ public sealed partial class BoardForm
         menuButtons.Clear();
         if (!menuOpen) return;
         const float pad = 6, row = 36, caption = 24, chipH = 58, divider = 9;
-        float h = pad + row * 3 + divider + caption + chipH + divider + row + pad;
+        float h = pad + row * 3 + divider + caption + chipH + divider + row * 2 + pad;
         float x = toolbarRect.Right - MenuWidth, y = toolbarRect.Top - 8 - h;
         menuRect = new RectangleF(x, y, MenuWidth, h);
 
@@ -136,18 +136,50 @@ public sealed partial class BoardForm
         cy += chipH;
         MenuDivider(r, x, ref cy, divider);
 
-        // Dark mode with a switch.
-        var themeRow = new RectangleF(x + pad, cy, MenuWidth - pad * 2, row);
-        brush.Color = Colors.Icon;
-        r.DrawText(dark ? SunIcon : MoonIcon, iconFont, new DRect(themeRow.X + 4, cy, 28, row), brush);
-        r.DrawText("Dark mode", menuFont!, new DRect(themeRow.X + 40, cy, 120, row), brush);
-        var track = new RectangleF(themeRow.Right - 46, cy + row / 2 - 10, 38, 20);
-        brush.Color = dark ? Colors.Accent : Colors.Faint(0.22f);
+        // Switches.
+        SwitchRow(r, x, ref cy, row, dark ? SunIcon : MoonIcon, "Dark mode", dark, ToggleDark);
+        SwitchRow(r, x, ref cy, row, "\uE7E8", "Start with Windows", autostartOn, ToggleAutostart);
+    }
+
+    void SwitchRow(ID2D1RenderTarget r, float x, ref float cy, float row, string icon, string label, bool on, Action toggle)
+    {
+        const float pad = 6;
+        var rect = new RectangleF(x + pad, cy, MenuWidth - pad * 2, row);
+        brush!.Color = Colors.Icon;
+        r.DrawText(icon, iconFont, new DRect(rect.X + 4, cy, 28, row), brush);
+        r.DrawText(label, menuFont!, new DRect(rect.X + 40, cy, rect.Width - 96, row), brush);
+        var track = new RectangleF(rect.Right - 46, cy + row / 2 - 10, 38, 20);
+        brush.Color = on ? Colors.Accent : Colors.Faint(0.22f);
         r.FillRoundedRectangle(new RoundedRectangle(track, 10, 10), brush);
         brush.Color = new Color4(1, 1, 1, 1);
-        float knobX = dark ? track.Right - 10 : track.Left + 10;
+        float knobX = on ? track.Right - 10 : track.Left + 10;
         r.FillEllipse(new Ellipse(new Vector2(knobX, track.Y + 10), 7, 7), brush);
-        menuButtons.Add((themeRow, ToggleDark));
+        menuButtons.Add((rect, toggle));
+        cy += row;
+    }
+
+    // Whether the Startup shortcut exists; read when the menu opens, not on every frame.
+    bool autostartOn;
+
+    void ToggleAutostart()
+    {
+        try
+        {
+            Autostart.Set(!autostartOn);
+            autostartOn = Autostart.IsOn();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Runtime.InteropServices.COMException)
+        {
+            ShowNotice($"Couldn't change Start with Windows: {ex.Message}", seconds: 10);
+        }
+        Invalidate();
+    }
+
+    void ToggleMenu()
+    {
+        menuOpen = !menuOpen;
+        if (menuOpen) autostartOn = Autostart.IsOn();
+        Invalidate();
     }
 
     void MenuRow(ID2D1RenderTarget r, float x, ref float cy, float row, string icon, string label, Action click)

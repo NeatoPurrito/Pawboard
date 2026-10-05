@@ -20,7 +20,7 @@ To quit, right-click the paw in the tray → **Exit Pawboard**.
 
 Pick a tool from the toolbar at the bottom: pen, eraser, text, or the arrow to use your desktop
 normally. Scroll to zoom in, middle-drag to move around, right-drag to erase. The ☰ menu has
-save/open, dark mode and backgrounds.
+save/open, dark mode, backgrounds and Start with Windows.
 
 It saves by itself and uses no CPU when you're not drawing.
 
