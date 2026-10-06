@@ -616,7 +616,7 @@ public sealed partial class BoardForm : Form
                 r.DrawLine(a, a + new Vector2(0, height * zoom), brush, 1.6f);
             }
         }
-        else if (hoverText != null && tool == Tool.Text && mode == Mode.None)
+        if (hoverText != null && hoverText != editOriginal && tool == Tool.Text && mode == Mode.None && movingText == null)
         {
             DrawBox(r, hoverText, Colors.Faint(0.3f), 1f, handles: true);
         }
@@ -1096,7 +1096,7 @@ public sealed partial class BoardForm : Form
             Tool.Text when handle is Grip.TopRight or Grip.BottomLeft => Cursors.SizeNESW,
             Tool.Text when handle is Grip.Left or Grip.Right => Cursors.SizeWE,
             Tool.Text when handle is Grip.Move => Cursors.SizeAll,
-            Tool.Text when hoverText != null && editing == null => Cursors.SizeAll,
+            Tool.Text when hoverText != null => Cursors.SizeAll,
             Tool.Text => Cursors.IBeam,
             _ => Cursors.Cross,
         });
@@ -1271,13 +1271,15 @@ public sealed partial class BoardForm : Form
                 if (tool == Tool.Eraser) Invalidate();   // the eraser circle follows the mouse
                 if (tool == Tool.Text)
                 {
-                    if (editing == null)
-                    {
-                        // Keep the box while the mouse is on one of its handles, which stick out past the text.
-                        var hit = HandleAt(hoverText, cursor) != Grip.None ? hoverText : TextAt(ScreenToWorld(cursor));
-                        if (hit != hoverText) { hoverText = hit; Invalidate(); }
-                    }
-                    hoverHandle = HandleAt(editing ?? hoverText, cursor);
+                    // Shows what a click would pick up, also while typing in another text box.
+                    // Keep the box while the mouse is on one of its handles, which stick out past the text.
+                    var world = ScreenToWorld(cursor);
+                    var hit = OverEditBox(world) ? null
+                        : HandleAt(hoverText, cursor) != Grip.None ? hoverText : TextAt(world);
+                    if (hit == editOriginal) hit = null;   // that's the one being typed in
+                    if (hit != hoverText) { hoverText = hit; Invalidate(); }
+                    var editGrip = HandleAt(editing, cursor);
+                    hoverHandle = editGrip != Grip.None ? editGrip : HandleAt(hoverText, cursor);
                 }
                 UpdateCursor();
                 break;
@@ -1508,20 +1510,27 @@ public sealed partial class BoardForm : Form
         return null;
     }
 
+    // While typing: on the text box itself or one of its handles (the box being typed in comes
+    // first, even where it overlaps another text).
+    bool OverEditBox(Vector2 world)
+    {
+        if (editing == null) return false;
+        float pad = 6 / zoom;
+        return RectangleF.Inflate(editing.Bounds, pad, pad).Contains(world.X, world.Y) || HandleAt(editing, cursor) != Grip.None;
+    }
+
     void TextMouseDown()
     {
         var world = ScreenToWorld(cursor);
-        var target = editing ?? hoverText;
-        var handle = HandleAt(target, cursor);
-        if (handle != Grip.None)
-        {
-            BeginResize(target!, handle);
-            return;
-        }
         if (editing != null)
         {
-            float pad = 6 / zoom;
-            if (RectangleF.Inflate(editing.Bounds, pad, pad).Contains(world.X, world.Y))
+            var editHandle = HandleAt(editing, cursor);
+            if (editHandle != Grip.None)
+            {
+                BeginResize(editing, editHandle);
+                return;
+            }
+            if (OverEditBox(world))
             {
                 int at = textInk.IndexAt(editing, world);
                 long now = Environment.TickCount64;
@@ -1540,11 +1549,20 @@ public sealed partial class BoardForm : Form
                 }
                 RestartCaretBlink();
                 Invalidate();
+                return;
             }
-            else CommitTextEdit();   // clicking elsewhere finishes the text; the next click starts a new one
-            return;
+            // Clicking elsewhere finishes the text. On another text, the same click goes on to
+            // pick that one up; on empty space it only finishes (the next click starts a new one).
+            CommitTextEdit();
+            if (hoverText == null) return;
         }
 
+        var handle = HandleAt(hoverText, cursor);
+        if (handle != Grip.None)
+        {
+            BeginResize(hoverText!, handle);
+            return;
+        }
         var hit = TextAt(world);
         if (hit != null)
         {
