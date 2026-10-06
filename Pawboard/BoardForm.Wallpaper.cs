@@ -17,6 +17,13 @@ public sealed partial class BoardForm
     nint foregroundHook;
     WinEventProc? foregroundProc;                       // kept alive: Windows holds a pointer to it
     readonly System.Windows.Forms.Timer fullscreenRecheck = new() { Interval = 2000 };
+    long shellMenuClosedAt = long.MinValue / 2;   // Environment.TickCount64 when we last closed the desktop menu
+
+    // Clicks the board takes never reach Explorer, so it can't close its own right-click menu.
+    void CloseShellMenu()
+    {
+        if (Desktop.CloseShellMenu()) shellMenuClosedAt = Environment.TickCount64;
+    }
 
     // Desktop icon positions (screen pixels), so clicks on icons can be left to Windows.
     List<Rectangle> iconRects = new();
@@ -113,7 +120,9 @@ public sealed partial class BoardForm
             {
                 // Another window came to the front (a chat, a login prompt...): close any open
                 // text box at once, so nothing typed for that window ends up on the board.
-                if (editing != null) CommitTextEdit();
+                // Not when it's only Windows moving the focus back after we closed its desktop menu.
+                bool fromOurMenuClose = Environment.TickCount64 - shellMenuClosedAt < 1000;
+                if (editing != null && !fromOurMenuClose) CommitTextEdit();
                 UpdateFullscreen(hwnd);
                 fullscreenRecheck.Start();
             }
@@ -370,7 +379,7 @@ public sealed partial class BoardForm
                     return false;
                 }
                 hookCapture = MouseButtons.Left;
-                BeginInvoke(Desktop.CloseShellMenu);   // Explorer won't see this click to close its menu
+                BeginInvoke(CloseShellMenu);
                 BeginInvoke(() => PointerDown(MouseButtons.Left, client));
                 return true;
             }
@@ -378,7 +387,7 @@ public sealed partial class BoardForm
             {
                 if (zoomLocked || !Desktop.IsDesktopAt(screen) || OverIcon(screen)) return false;
                 hookCapture = MouseButtons.Middle;
-                BeginInvoke(Desktop.CloseShellMenu);
+                BeginInvoke(CloseShellMenu);
                 BeginInvoke(() => PointerDown(MouseButtons.Middle, client));
                 return true;
             }
@@ -391,7 +400,7 @@ public sealed partial class BoardForm
                 var dip = new System.Numerics.Vector2(client.X, client.Y) / hookDpiScale;
                 if (toolbarRect.Contains(dip.X, dip.Y)) return false;
                 hookCapture = MouseButtons.Right;
-                BeginInvoke(Desktop.CloseShellMenu);
+                BeginInvoke(CloseShellMenu);
                 rightUndecided = true;
                 rightPressScreen = screen;
                 rightPressClient = client;

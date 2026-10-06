@@ -107,8 +107,11 @@ public sealed partial class BoardForm : Form
     }
     Item? hiddenItem;
 
-    // Grab handles on a text box: corners scale the text, the side edges set where lines wrap.
-    enum Grip { None, TopLeft, TopRight, BottomLeft, BottomRight, Left, Right }
+    // Grab handles on a text box: corners scale the text, the side edges set where lines wrap,
+    // and while typing, a grip above (or below) the box moves it.
+    enum Grip { None, TopLeft, TopRight, BottomLeft, BottomRight, Left, Right, Move }
+    bool moveGripBelow;              // no room above the box on its screen; only changes when not dragging
+    Vector2 resizeStartCursor;       // world point where a resize or move started
     Grip hoverHandle;
     Grip resizeHandle;
     TextItem? resizeItem;            // the text being resized (the edit copy, or a copy of a placed text)
@@ -617,6 +620,11 @@ public sealed partial class BoardForm : Form
         if (!handles) return;
         foreach (var (handle, p) in HandlePoints(t))
         {
+            if (handle == Grip.Move)
+            {
+                DrawMoveGrip(r, box, p, color);
+                continue;
+            }
             var rect = handle is Grip.Left or Grip.Right
                 ? new RectangleF(p.X - 2.5f, p.Y - 8, 5, 16)
                 : new RectangleF(p.X - 4, p.Y - 4, 8, 8);
@@ -627,24 +635,65 @@ public sealed partial class BoardForm : Form
         }
     }
 
-    // Handle positions in screen DIPs, on the corners and side midpoints of the text's box.
+    // A little pill with a dot pattern, on a short stem from the box.
+    void DrawMoveGrip(ID2D1RenderTarget r, RectangleF box, Vector2 p, Color4 color)
+    {
+        const float w = 26, h = 16;
+        brush!.Color = color;
+        float edge = p.Y < box.Top ? box.Top : box.Bottom;
+        float end = p.Y < box.Top ? p.Y + h / 2 : p.Y - h / 2;
+        r.DrawLine(new Vector2(p.X, edge), new Vector2(p.X, end), brush, 1.2f);
+        var pill = new RoundedRectangle(new RectangleF(p.X - w / 2, p.Y - h / 2, w, h), h / 2, h / 2);
+        brush.Color = Colors.Panel;
+        r.FillRoundedRectangle(pill, brush);
+        brush.Color = color;
+        r.DrawRoundedRectangle(pill, brush, 1.2f);
+        for (int i = -1; i <= 1; i++)
+            for (int j = 0; j < 2; j++)
+                r.FillEllipse(new Ellipse(new Vector2(p.X + i * 5, p.Y - 2.5f + j * 5), 1.3f, 1.3f), brush);
+    }
+
+    // Handle positions in screen DIPs, on the corners and side midpoints of the text's box, plus
+    // the move grip while it's being typed in.
     (Grip, Vector2)[] HandlePoints(TextItem t)
     {
         var b = ToScreen(t.Bounds, 6);
         float midY = (b.Top + b.Bottom) / 2;
-        return
+        (Grip, Vector2)[] edges =
         [
             (Grip.TopLeft, new(b.Left, b.Top)), (Grip.TopRight, new(b.Right, b.Top)),
             (Grip.BottomLeft, new(b.Left, b.Bottom)), (Grip.BottomRight, new(b.Right, b.Bottom)),
             (Grip.Left, new(b.Left, midY)), (Grip.Right, new(b.Right, midY)),
         ];
+        return t == editing ? [.. edges, (Grip.Move, MoveGripPoint(b))] : edges;
+    }
+
+    // Above the box, or below it when the box is too close to the top of its screen to grab
+    // it there. It doesn't flip mid-drag, so it never jumps out from under the mouse.
+    Vector2 MoveGripPoint(RectangleF box)
+    {
+        const float reach = 22;   // box edge to the grip's centre
+        float x = (box.Left + box.Right) / 2;
+        if (!(mode == Mode.ResizeText && resizeHandle == Grip.Move))
+            moveGripBelow = box.Top - reach - 10 < ScreenTopAt(x, box.Top);
+        return new Vector2(x, moveGripBelow ? box.Bottom + reach : box.Top - reach);
+    }
+
+    // The top of the usable screen area at this point, in client DIPs (monitors can sit at
+    // different heights, and a taskbar can be at the top).
+    float ScreenTopAt(float x, float y)
+    {
+        if (!wallpaper) return 0;
+        var px = PointToScreen(new System.Drawing.Point((int)(x * DpiScale), (int)(y * DpiScale)));
+        var work = Screen.FromPoint(px).WorkingArea;
+        return PointToClient(new System.Drawing.Point(px.X, work.Top)).Y / DpiScale;
     }
 
     Grip HandleAt(TextItem? t, Vector2 screen)
     {
         if (t == null) return Grip.None;
         foreach (var (handle, p) in HandlePoints(t))
-            if (Vector2.Distance(p, screen) <= 9) return handle;
+            if (Vector2.Distance(p, screen) <= (handle == Grip.Move ? 14 : 9)) return handle;
         return Grip.None;
     }
 
@@ -1020,6 +1069,7 @@ public sealed partial class BoardForm : Form
             Tool.Text when handle is Grip.TopLeft or Grip.BottomRight => Cursors.SizeNWSE,
             Tool.Text when handle is Grip.TopRight or Grip.BottomLeft => Cursors.SizeNESW,
             Tool.Text when handle is Grip.Left or Grip.Right => Cursors.SizeWE,
+            Tool.Text when handle is Grip.Move => Cursors.SizeAll,
             Tool.Text when hoverText != null && editing == null => Cursors.SizeAll,
             Tool.Text => Cursors.IBeam,
             _ => Cursors.Cross,
@@ -1631,6 +1681,7 @@ public sealed partial class BoardForm : Form
         resizeStartPosition = resizeItem.Position;
         resizeStartFontSize = resizeItem.FontSize;
         resizeStartWidth = resizeItem.Width;
+        resizeStartCursor = ScreenToWorld(cursor);
         mode = Mode.ResizeText;
         modeButton = MouseButtons.Left;
         Invalidate();
@@ -1641,7 +1692,11 @@ public sealed partial class BoardForm : Form
         var t = resizeItem!;
         var w = ScreenToWorld(cursor);
         var b = resizeStartBounds;
-        if (resizeHandle is Grip.Left or Grip.Right)
+        if (resizeHandle == Grip.Move)
+        {
+            t.Position = resizeStartPosition + (w - resizeStartCursor);
+        }
+        else if (resizeHandle is Grip.Left or Grip.Right)
         {
             // Side edges set the line width; the text wraps to fit and the box grows downwards.
             float minWidth = resizeStartFontSize * 1.2f;

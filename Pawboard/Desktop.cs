@@ -141,14 +141,19 @@ static class Desktop
     // Explorer, so without this the menu would stay open while you draw. Windows 11's menu is an
     // Explorer XAML window that has the focus while it's open and closes on Esc; the classic one
     // ("Show more options") is a #32768 menu window, ended by cancelling its owner's menu mode.
-    public static void CloseShellMenu()
+    // Returns true if there was a menu to close.
+    public static bool CloseShellMenu()
     {
+        bool closed = false;
         var foreground = GetForegroundWindow();
         GetWindowThreadProcessId(GetShellWindow(), out uint shell);
         GetWindowThreadProcessId(foreground, out uint pid);
         // The class name varies by Windows build (e.g. a "_WASDK" suffix), so match its start.
         if (shell != 0 && pid == shell && ClassName(foreground).StartsWith("XamlExplorerHostIslandWindow", StringComparison.Ordinal))
+        {
             InputHooks.PressEscape();
+            closed = true;
+        }
 
         const uint WM_CANCELMODE = 0x1F;
         for (nint menu = FindWindowEx(0, 0, "#32768", null); menu != 0; menu = FindWindowEx(0, menu, "#32768", null))
@@ -158,8 +163,12 @@ static class Desktop
             if (pid != shell) continue;
             var info = new GUITHREADINFO { cbSize = Marshal.SizeOf<GUITHREADINFO>() };
             if (GetGUIThreadInfo(thread, ref info) && info.hwndMenuOwner != 0)
+            {
                 PostMessage(info.hwndMenuOwner, WM_CANCELMODE, 0, 0);
+                closed = true;
+            }
         }
+        return closed;
     }
 
     static string ClassName(nint hwnd)
