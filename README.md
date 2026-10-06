@@ -11,7 +11,7 @@ Made with Claude (Opus 5.5). I came up with the idea and tested it, Claude wrote
 
 ## Download
 
-Grab `Pawboard-0.1.0-win-x64.exe` from [Releases](https://github.com/NeatoPurrito/Pawboard/releases)
+Grab `Pawboard-0.2.0-win-x64.exe` from [Releases](https://github.com/NeatoPurrito/Pawboard/releases)
 and run it. Windows 11, 64-bit.
 
 It isn't code-signed, so Windows will warn you: click **More info → Run anyway**.
