@@ -280,6 +280,7 @@ public static class BoardStore
     {
         public bool Dark { get; set; }
         public string Background { get; set; } = "Dots";   // Dots, Lines, Squares or Plain
+        public bool ToolbarHidden { get; set; }
     }
 
     static string SettingsPath => Path.Combine(Folder, "settings.json");

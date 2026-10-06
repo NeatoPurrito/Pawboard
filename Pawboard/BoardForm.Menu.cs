@@ -43,7 +43,7 @@ public sealed partial class BoardForm
 
     void SaveSettings()
     {
-        try { BoardStore.SaveSettings(new BoardStore.Settings { Dark = dark, Background = backdrop.ToString() }); }
+        try { BoardStore.SaveSettings(new BoardStore.Settings { Dark = dark, Background = backdrop.ToString(), ToolbarHidden = toolbarHidden }); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }   // just won't be remembered
     }
 

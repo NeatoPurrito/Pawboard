@@ -32,7 +32,7 @@ public sealed partial class BoardForm : Form
     const float MinZoom = 1f, MaxZoom = 8f;
     const string IconFont = "Segoe Fluent Icons";
     const string PenIcon = "\uE70F", EraserIcon = "\uE75C", TextIcon = "\uE8D2", UndoIcon = "\uE7A7", RedoIcon = "\uE7A6";
-    const string DesktopIcon = "\uE8B0";
+    const string DesktopIcon = "\uE8B0", HideIcon = "\uE70D";
     const string MoonIcon = "\uE708", SunIcon = "\uE706";
 
     readonly ID2D1Factory factory = D2D1.D2D1CreateFactory<ID2D1Factory>();
@@ -124,7 +124,9 @@ public sealed partial class BoardForm : Form
     Native.MOUSEMOVEPOINT? lastMove;
 
     readonly List<(RectangleF Rect, Action Click)> toolbarButtons = new();
-    RectangleF toolbarRect;
+    RectangleF toolbarRect;          // while hidden: the small tab that brings it back
+    bool toolbarHidden;
+    Tool toolBeforeHide = Tool.Desktop;
 
     readonly System.Windows.Forms.Timer saveTimer = new() { Interval = 1500 };
     string? notice;                  // shown across the bottom of the board (save trouble, an unreadable board...)
@@ -157,6 +159,7 @@ public sealed partial class BoardForm : Form
         var settings = BoardStore.LoadSettings();
         dark = settings.Dark;
         if (!Enum.TryParse(settings.Background, out backdrop)) backdrop = Backdrop.Dots;
+        toolbarHidden = settings.ToolbarHidden;
         ApplyWindowTheme();
         SetPointer(Cursors.Cross);
         KeyPreview = true;
@@ -657,10 +660,15 @@ public sealed partial class BoardForm : Form
     void DrawToolbar(ID2D1RenderTarget r)
     {
         toolbarButtons.Clear();
+        var area = ToolbarArea;
+        if (toolbarHidden)
+        {
+            DrawToolbarTab(r, area);
+            return;
+        }
         const float h = 48, toolW = 40, swatch = 28, sizeSlot = 30, pad = 8, gap = 18;
         var tools = ToolButtons;
-        float w = pad + tools.Length * toolW + gap + Palette.Length * swatch + gap + 5 * sizeSlot + gap + 2 * toolW + gap + toolW + pad;
-        var area = ToolbarArea;
+        float w = pad + tools.Length * toolW + gap + Palette.Length * swatch + gap + 5 * sizeSlot + gap + 2 * toolW + gap + 2 * toolW + pad;
         float x = MathF.Round(area.Left + (area.Width - w) / 2), y = area.Bottom - h - 14;
         toolbarRect = new RectangleF(x, y, w, h);
 
@@ -767,6 +775,32 @@ public sealed partial class BoardForm : Form
         r.DrawText(MenuIcon, iconFont, ToDRect(menuIcon), brush);
         menuButtonRect = new RectangleF(cx, y, toolW, h);
         toolbarButtons.Add((menuButtonRect, ToggleMenu));
+        cx += toolW;
+
+        // Hide: the toolbar shrinks to a small tab
+        brush.Color = Colors.Icon;
+        r.DrawText(HideIcon, iconFont, ToDRect(new RectangleF(cx + 3, y + 7, toolW - 6, h - 14)), brush);
+        toolbarButtons.Add((new RectangleF(cx, y, toolW, h), HideToolbar));
+    }
+
+    // The hidden toolbar: a small tab where its bottom edge was. Clicking anywhere near it
+    // brings the toolbar back, so it doesn't need careful aiming.
+    void DrawToolbarTab(ID2D1RenderTarget r, RectangleF area)
+    {
+        const float w = 64, h = 14, hitW = 140, hitH = 34;
+        float cx = MathF.Round(area.Left + area.Width / 2), bottom = area.Bottom - 10;
+        var tab = new RectangleF(cx - w / 2, bottom - h, w, h);
+        toolbarRect = new RectangleF(cx - hitW / 2, area.Bottom - hitH, hitW, hitH);
+        toolbarButtons.Add((toolbarRect, ShowToolbar));
+
+        brush!.Color = Colors.PanelShadow;
+        r.FillRoundedRectangle(new RoundedRectangle(new RectangleF(tab.X, tab.Y + 2, w, h), 7, 7), brush);
+        brush.Color = Colors.Panel;
+        r.FillRoundedRectangle(new RoundedRectangle(tab, 7, 7), brush);
+        brush.Color = Colors.PanelBorder;
+        r.DrawRoundedRectangle(new RoundedRectangle(new RectangleF(tab.X + 0.5f, tab.Y + 0.5f, w - 1, h - 1), 7, 7), brush, 1f);
+        brush.Color = Colors.Faint(dark ? 0.35f : 0.3f);
+        r.FillRoundedRectangle(new RoundedRectangle(new RectangleF(cx - 14, tab.Y + h / 2 - 1.5f, 28, 3), 1.5f, 1.5f), brush);
     }
 
     void Divider(ID2D1RenderTarget r, ref float cx, float y, float h, float gap)
@@ -879,6 +913,30 @@ public sealed partial class BoardForm : Form
         tool = t;
         hoverText = null;
         UpdateCursor();
+        Invalidate();
+    }
+
+    // On the wallpaper, hiding also steps aside to the Desktop tool: with no toolbar you can't
+    // see which tool is on, so the desktop just works as usual. Showing it brings the tool back.
+    void HideToolbar()
+    {
+        CommitTextEdit();
+        CloseMenu();
+        toolbarHidden = true;
+        if (wallpaper)
+        {
+            toolBeforeHide = tool;
+            SetTool(Tool.Desktop);
+        }
+        SaveSettings();
+        Invalidate();
+    }
+
+    void ShowToolbar()
+    {
+        toolbarHidden = false;
+        if (wallpaper && tool == Tool.Desktop) SetTool(toolBeforeHide);
+        SaveSettings();
         Invalidate();
     }
 
