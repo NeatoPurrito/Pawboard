@@ -8,7 +8,8 @@ public sealed class Theme
 {
     public required Color4 Background;
     public required Color4 Dots;
-    public required Color4 Panel;           // toolbar and grab handles
+    public required Color4 DotsStrong;      // the pattern at the strong end of its slider
+    public required Color4 Panel;          // toolbar and grab handles
     public required Color4 PanelBorder;
     public required Color4 PanelShadow;
     public required Color4 Icon;
@@ -25,6 +26,7 @@ public sealed class Theme
     {
         Background = Rgb(0xF8F7F4),
         Dots = Rgb(0xCFCBC2),
+        DotsStrong = Rgb(0x9C978C),
         Panel = Rgb(0xFFFFFF),
         PanelBorder = new(0, 0, 0, 0.1f),
         PanelShadow = new(0, 0, 0, 0.06f),
@@ -39,6 +41,7 @@ public sealed class Theme
     {
         Background = Rgb(0x15181E),
         Dots = Rgb(0x2A2F38),
+        DotsStrong = Rgb(0x4D5665),
         Panel = Rgb(0x1E2229),
         PanelBorder = Rgb(0x323843),
         PanelShadow = new(0, 0, 0, 0.35f),

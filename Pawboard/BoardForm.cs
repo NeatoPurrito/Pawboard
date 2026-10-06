@@ -32,7 +32,7 @@ public sealed partial class BoardForm : Form
     const float MinZoom = 1f, MaxZoom = 8f;
     const string IconFont = "Segoe Fluent Icons";
     const string PenIcon = "\uE70F", EraserIcon = "\uE75C", TextIcon = "\uE8D2", UndoIcon = "\uE7A7", RedoIcon = "\uE7A6";
-    const string DesktopIcon = "\uE8B0", HideIcon = "\uE70D";
+    const string DesktopIcon = "\uE8B0", HideIcon = "\uE70D", ExpandIcon = "\uE70E";
     const string MoonIcon = "\uE708", SunIcon = "\uE706";
 
     readonly ID2D1Factory factory = D2D1.D2D1CreateFactory<ID2D1Factory>();
@@ -73,7 +73,7 @@ public sealed partial class BoardForm : Form
     int colorIndex;
     readonly int[] sizeIndex = [1, 1, 1];
 
-    enum Mode { None, Draw, Erase, Pan, PressText, MoveText, ResizeText }
+    enum Mode { None, Draw, Erase, Pan, PressText, MoveText, ResizeText, Slide }
     Mode mode;
     MouseButtons modeButton;
     Vector2 cursor;                  // last mouse position, screen DIPs
@@ -124,9 +124,8 @@ public sealed partial class BoardForm : Form
     Native.MOUSEMOVEPOINT? lastMove;
 
     readonly List<(RectangleF Rect, Action Click)> toolbarButtons = new();
-    RectangleF toolbarRect;          // while hidden: the small tab that brings it back
+    RectangleF toolbarRect;          // while hidden: the mini bar
     bool toolbarHidden;
-    Tool toolBeforeHide = Tool.Desktop;
 
     readonly System.Windows.Forms.Timer saveTimer = new() { Interval = 1500 };
     string? notice;                  // shown across the bottom of the board (save trouble, an unreadable board...)
@@ -159,6 +158,7 @@ public sealed partial class BoardForm : Form
         var settings = BoardStore.LoadSettings();
         dark = settings.Dark;
         if (!Enum.TryParse(settings.Background, out backdrop)) backdrop = Backdrop.Dots;
+        patternStrength = float.IsFinite(settings.PatternStrength) ? Math.Clamp(settings.PatternStrength, 0, 1) : 0.5f;
         toolbarHidden = settings.ToolbarHidden;
         ApplyWindowTheme();
         SetPointer(Cursors.Cross);
@@ -556,11 +556,11 @@ public sealed partial class BoardForm : Form
         for (int pass = 0; pass < 2; pass++)
         {
             bool coarsePass = pass == 0;
-            var color = Colors.Dots;
+            var color = PatternColor(1);
             if (!coarsePass)
             {
                 if (fade <= 0.01f) break;
-                color = WithAlpha(color, fade);
+                color = WithAlpha(color, color.A * fade);
             }
             brush!.Color = color;
             for (int j = j0; j <= j1; j++)
@@ -663,7 +663,7 @@ public sealed partial class BoardForm : Form
         var area = ToolbarArea;
         if (toolbarHidden)
         {
-            DrawToolbarTab(r, area);
+            DrawMiniToolbar(r, area);
             return;
         }
         const float h = 48, toolW = 40, swatch = 28, sizeSlot = 30, pad = 8, gap = 18;
@@ -783,24 +783,46 @@ public sealed partial class BoardForm : Form
         toolbarButtons.Add((new RectangleF(cx, y, toolW, h), HideToolbar));
     }
 
-    // The hidden toolbar: a small tab where its bottom edge was. Clicking anywhere near it
-    // brings the toolbar back, so it doesn't need careful aiming.
-    void DrawToolbarTab(ID2D1RenderTarget r, RectangleF area)
+    // The hidden toolbar: a mini bar with just the arrow and the pen (so it's always clear which
+    // one is on), plus a button that brings the full toolbar back.
+    (Tool, string)[] MiniTools => ToolButtons.Where(b => b.Item1 is Tool.Desktop or Tool.Pen).ToArray();
+
+    void DrawMiniToolbar(ID2D1RenderTarget r, RectangleF area)
     {
-        const float w = 64, h = 14, hitW = 140, hitH = 34;
-        float cx = MathF.Round(area.Left + area.Width / 2), bottom = area.Bottom - 10;
-        var tab = new RectangleF(cx - w / 2, bottom - h, w, h);
-        toolbarRect = new RectangleF(cx - hitW / 2, area.Bottom - hitH, hitW, hitH);
-        toolbarButtons.Add((toolbarRect, ShowToolbar));
+        const float h = 40, toolW = 36, pad = 5, gap = 10;
+        var tools = MiniTools;
+        float w = pad + tools.Length * toolW + gap + toolW + pad;
+        float x = MathF.Round(area.Left + (area.Width - w) / 2), y = area.Bottom - h - 14;
+        toolbarRect = new RectangleF(x, y, w, h);
 
         brush!.Color = Colors.PanelShadow;
-        r.FillRoundedRectangle(new RoundedRectangle(new RectangleF(tab.X, tab.Y + 2, w, h), 7, 7), brush);
+        r.FillRoundedRectangle(new RoundedRectangle(new RectangleF(x, y + 2, w, h), 12, 12), brush);
         brush.Color = Colors.Panel;
-        r.FillRoundedRectangle(new RoundedRectangle(tab, 7, 7), brush);
+        r.FillRoundedRectangle(new RoundedRectangle(new RectangleF(x, y, w, h), 12, 12), brush);
         brush.Color = Colors.PanelBorder;
-        r.DrawRoundedRectangle(new RoundedRectangle(new RectangleF(tab.X + 0.5f, tab.Y + 0.5f, w - 1, h - 1), 7, 7), brush, 1f);
-        brush.Color = Colors.Faint(dark ? 0.35f : 0.3f);
-        r.FillRoundedRectangle(new RoundedRectangle(new RectangleF(cx - 14, tab.Y + h / 2 - 1.5f, 28, 3), 1.5f, 1.5f), brush);
+        r.DrawRoundedRectangle(new RoundedRectangle(new RectangleF(x + 0.5f, y + 0.5f, w - 1, h - 1), 12, 12), brush, 1f);
+
+        float cx = x + pad;
+        foreach (var (t, icon) in tools)
+        {
+            var rect = new RectangleF(cx + 3, y + 5, toolW - 6, h - 10);
+            bool selected = tool == t;
+            if (selected)
+            {
+                brush.Color = WithAlpha(Colors.Accent, dark ? 0.16f : 0.13f);
+                r.FillRoundedRectangle(new RoundedRectangle(rect, 8, 8), brush);
+            }
+            brush.Color = selected ? Colors.Accent : Colors.Icon;
+            r.DrawText(icon, iconFont, ToDRect(rect), brush);
+            var chosen = t;
+            toolbarButtons.Add((new RectangleF(cx, y, toolW, h), () => SetTool(chosen)));
+            cx += toolW;
+        }
+        Divider(r, ref cx, y, h, gap);
+
+        brush.Color = Colors.Icon;
+        r.DrawText(ExpandIcon, iconFont, ToDRect(new RectangleF(cx + 3, y + 5, toolW - 6, h - 10)), brush);
+        toolbarButtons.Add((new RectangleF(cx, y, toolW, h), ShowToolbar));
     }
 
     void Divider(ID2D1RenderTarget r, ref float cx, float y, float h, float gap)
@@ -916,18 +938,14 @@ public sealed partial class BoardForm : Form
         Invalidate();
     }
 
-    // On the wallpaper, hiding also steps aside to the Desktop tool: with no toolbar you can't
-    // see which tool is on, so the desktop just works as usual. Showing it brings the tool back.
+    // The pen stays on when the toolbar shrinks; any other tool steps aside to the arrow (on the
+    // wallpaper), since the mini bar couldn't show it.
     void HideToolbar()
     {
         CommitTextEdit();
         CloseMenu();
         toolbarHidden = true;
-        if (wallpaper)
-        {
-            toolBeforeHide = tool;
-            SetTool(Tool.Desktop);
-        }
+        if (!MiniTools.Any(b => b.Item1 == tool)) SetTool(MiniTools[0].Item1);
         SaveSettings();
         Invalidate();
     }
@@ -935,7 +953,6 @@ public sealed partial class BoardForm : Form
     void ShowToolbar()
     {
         toolbarHidden = false;
-        if (wallpaper && tool == Tool.Desktop) SetTool(toolBeforeHide);
         SaveSettings();
         Invalidate();
     }
@@ -1166,6 +1183,9 @@ public sealed partial class BoardForm : Form
                 UpdateResize();
                 Invalidate();
                 break;
+            case Mode.Slide:
+                SlideTo(cursor.X);
+                break;
             default:
                 if (tool == Tool.Eraser) Invalidate();   // the eraser circle follows the mouse
                 if (tool == Tool.Text)
@@ -1225,6 +1245,7 @@ public sealed partial class BoardForm : Form
                 break;
             case Mode.MoveText: EndMoveText(); break;
             case Mode.ResizeText: EndResize(); break;
+            case Mode.Slide: SaveSettings(); break;
         }
         mode = Mode.None;
         UpdateCursor();

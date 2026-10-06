@@ -16,6 +16,8 @@ public sealed partial class BoardForm
     const float MenuWidth = 236;
 
     Backdrop backdrop = Backdrop.Dots;
+    float patternStrength = 0.5f;   // 0 faint, 0.5 the normal look, 1 strong
+    RectangleF sliderTrack;         // where the strength slider's track is, for dragging
     bool menuOpen;
     RectangleF menuRect;
     RectangleF menuButtonRect;
@@ -43,7 +45,16 @@ public sealed partial class BoardForm
 
     void SaveSettings()
     {
-        try { BoardStore.SaveSettings(new BoardStore.Settings { Dark = dark, Background = backdrop.ToString(), ToolbarHidden = toolbarHidden }); }
+        try
+        {
+            BoardStore.SaveSettings(new BoardStore.Settings
+            {
+                Dark = dark,
+                Background = backdrop.ToString(),
+                PatternStrength = patternStrength,
+                ToolbarHidden = toolbarHidden,
+            });
+        }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }   // just won't be remembered
     }
 
@@ -53,6 +64,35 @@ public sealed partial class BoardForm
         contentVersion++;
         cacheDirty = true;
         SaveSettings();
+        Invalidate();
+    }
+
+    // The pattern's colour at the current strength. baseAlpha is how strong the pattern is drawn
+    // normally. Below the middle it fades out; above, it darkens (light) or brightens (dark).
+    Color4 PatternColor(float baseAlpha)
+    {
+        float t = patternStrength;
+        if (t <= 0.5f) return WithAlpha(Colors.Dots, baseAlpha * (0.12f + 0.88f * t / 0.5f));
+        float u = (t - 0.5f) / 0.5f;
+        Color4 a = Colors.Dots, b = Colors.DotsStrong;
+        return new Color4(a.R + (b.R - a.R) * u, a.G + (b.G - a.G) * u, a.B + (b.B - a.B) * u, baseAlpha + (1 - baseAlpha) * u);
+    }
+
+    void BeginSlide()
+    {
+        mode = Mode.Slide;
+        modeButton = MouseButtons.Left;
+        SlideTo(cursor.X);
+    }
+
+    void SlideTo(float x)
+    {
+        float t = Math.Clamp((x - sliderTrack.Left) / sliderTrack.Width, 0, 1);
+        if (MathF.Abs(t - 0.5f) < 0.03f) t = 0.5f;   // easy to land back on the normal look
+        if (t == patternStrength) return;
+        patternStrength = t;
+        contentVersion++;
+        cacheDirty = true;
         Invalidate();
     }
 
@@ -90,8 +130,8 @@ public sealed partial class BoardForm
     {
         menuButtons.Clear();
         if (!menuOpen) return;
-        const float pad = 6, row = 36, caption = 24, chipH = 58, divider = 9;
-        float h = pad + row * 3 + divider + caption + chipH + divider + row * 2 + pad;
+        const float pad = 6, row = 36, caption = 24, chipH = 58, sliderH = 32, divider = 9;
+        float h = pad + row * 3 + divider + caption + chipH + sliderH + divider + row * 2 + pad;
         float x = toolbarRect.Right - MenuWidth, y = toolbarRect.Top - 8 - h;
         menuRect = new RectangleF(x, y, MenuWidth, h);
 
@@ -134,11 +174,49 @@ public sealed partial class BoardForm
             cx += chipW + 6;
         }
         cy += chipH;
+        DrawStrengthSlider(r, new RectangleF(x + pad, cy, MenuWidth - pad * 2, sliderH));
+        cy += sliderH;
         MenuDivider(r, x, ref cy, divider);
 
         // Switches.
         SwitchRow(r, x, ref cy, row, dark ? SunIcon : MoonIcon, "Dark mode", dark, ToggleDark);
         SwitchRow(r, x, ref cy, row, "\uE7E8", "Start with Windows", autostartOn, ToggleAutostart);
+    }
+
+    // How strong the pattern is: a small faint dot on the left, a bigger strong one on the right,
+    // with a tick in the middle for the normal look. Greyed out when there's no pattern.
+    void DrawStrengthSlider(ID2D1RenderTarget r, RectangleF slot)
+    {
+        bool enabled = backdrop != Backdrop.Plain;
+        float cy = slot.Y + slot.Height / 2 - 2;
+        float dim = enabled ? 1 : 0.4f;
+        brush!.Color = Colors.Faint(0.25f * dim);
+        r.FillEllipse(new Ellipse(new Vector2(slot.X + 14, cy), 2.5f, 2.5f), brush);
+        brush.Color = Colors.Faint(0.6f * dim);
+        r.FillEllipse(new Ellipse(new Vector2(slot.Right - 14, cy), 4.5f, 4.5f), brush);
+
+        sliderTrack = new RectangleF(slot.X + 32, cy - 2, slot.Width - 64, 4);
+        float knobX = sliderTrack.Left + sliderTrack.Width * patternStrength;
+        brush.Color = Colors.Faint(dark ? 0.16f : 0.12f);
+        r.FillRoundedRectangle(new RoundedRectangle(sliderTrack, 2, 2), brush);
+        brush.Color = Colors.Faint(dark ? 0.35f : 0.3f);
+        float mid = MathF.Round(sliderTrack.Left + sliderTrack.Width / 2) + 0.5f;
+        r.DrawLine(new Vector2(mid, cy - 6), new Vector2(mid, cy + 6), brush, 1f);
+        if (enabled)
+        {
+            brush.Color = Colors.Accent;
+            r.FillRoundedRectangle(new RoundedRectangle(new RectangleF(sliderTrack.X, sliderTrack.Y, knobX - sliderTrack.X, 4), 2, 2), brush);
+        }
+
+        var knob = new Ellipse(new Vector2(knobX, cy), 8, 8);
+        brush.Color = Colors.PanelShadow;
+        r.FillEllipse(new Ellipse(new Vector2(knobX, cy + 1.5f), 8, 8), brush);
+        brush.Color = enabled ? new Color4(1, 1, 1, 1) : Colors.Panel;
+        r.FillEllipse(knob, brush);
+        brush.Color = enabled ? Colors.Accent : Colors.PanelBorder;
+        r.DrawEllipse(knob, brush, enabled ? 1.5f : 1f);
+
+        if (enabled) menuButtons.Add((slot, BeginSlide));
     }
 
     void SwitchRow(ID2D1RenderTarget r, float x, ref float cy, float row, string icon, string label, bool on, Action toggle)
@@ -257,7 +335,8 @@ public sealed partial class BoardForm
         {
             bool coarsePass = pass == 0;
             if (!coarsePass && fade <= 0.01f) break;
-            brush!.Color = WithAlpha(Colors.Dots, strength * (coarsePass ? 1 : fade));
+            var color = PatternColor(strength);
+            brush!.Color = WithAlpha(color, color.A * (coarsePass ? 1 : fade));
 
             int j0 = (int)MathF.Floor(-offset.Y / s), j1 = (int)MathF.Ceiling((size.Y - offset.Y) / s);
             for (int j = j0; j <= j1; j++)
