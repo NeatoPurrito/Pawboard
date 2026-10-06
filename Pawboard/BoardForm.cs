@@ -73,7 +73,7 @@ public sealed partial class BoardForm : Form
     int colorIndex;
     readonly int[] sizeIndex = [1, 1, 1];
 
-    enum Mode { None, Draw, Erase, Pan, PressText, MoveText, ResizeText, Slide }
+    enum Mode { None, Draw, Erase, Pan, PressText, MoveText, ResizeText, Slide, SelectText }
     Mode mode;
     MouseButtons modeButton;
     Vector2 cursor;                  // last mouse position, screen DIPs
@@ -92,7 +92,11 @@ public sealed partial class BoardForm : Form
     TextItem? editing;               // the text box being typed in (a copy; the original stays for undo)
     TextItem? editOriginal;          // null when it's a new text
     int caret;
+    int anchor;                      // the other end of the selection; equal to caret when nothing is selected
     readonly List<(string Text, int Caret)> editHistory = new();   // capped, see SetEditText
+    readonly List<(string Text, int Caret)> editRedo = new();
+    long lastTextClick;              // for double-click to select a word
+    Vector2 lastTextClickAt;
     bool caretOn;
     readonly System.Windows.Forms.Timer caretTimer = new() { Interval = 530 };
     TextItem? hoverText;
@@ -596,6 +600,12 @@ public sealed partial class BoardForm : Form
         }
         else if (editing != null)
         {
+            if (anchor != caret)
+            {
+                brush!.Color = WithAlpha(Colors.Accent, dark ? 0.32f : 0.22f);
+                foreach (var rect in textInk.SelectionRects(editing, Math.Min(anchor, caret), Math.Max(anchor, caret)))
+                    r.FillRectangle(ToDRect(ToScreen(rect, 0)), brush);
+            }
             DrawItem(r, editing);
             DrawBox(r, editing, Colors.Accent, 1.5f, handles: true);
             if (caretOn)
@@ -1035,13 +1045,29 @@ public sealed partial class BoardForm : Form
     {
         if (editing != null)
         {
-            if (editHistory.Count > 0) { var (text, c) = editHistory[^1]; editHistory.RemoveAt(editHistory.Count - 1); SetEditText(text, c, record: false); }
+            if (editHistory.Count > 0)
+            {
+                var (text, c) = editHistory[^1];
+                editHistory.RemoveAt(editHistory.Count - 1);
+                editRedo.Add((editing.Text, caret));
+                SetEditText(text, c, record: false);
+            }
             else CommitTextEdit();
             return;
         }
         if (mode == Mode.None && board.Undo()) cacheDirty = true;
         hoverText = null;
         Invalidate();
+    }
+
+    // Ctrl+Y in a text box: puts back typing that Ctrl+Z took out.
+    void RedoTyping()
+    {
+        if (editing == null || editRedo.Count == 0) return;
+        var (text, c) = editRedo[^1];
+        editRedo.RemoveAt(editRedo.Count - 1);
+        editHistory.Add((editing.Text, caret));
+        SetEditText(text, c, record: false);
     }
 
     void RedoAction()
@@ -1237,6 +1263,9 @@ public sealed partial class BoardForm : Form
                 break;
             case Mode.Slide:
                 SlideTo(cursor.X);
+                break;
+            case Mode.SelectText:
+                if (editing != null) MoveCaret(textInk.IndexAt(editing, ScreenToWorld(cursor)), extend: true);
                 break;
             default:
                 if (tool == Tool.Eraser) Invalidate();   // the eraser circle follows the mouse
@@ -1494,7 +1523,21 @@ public sealed partial class BoardForm : Form
             float pad = 6 / zoom;
             if (RectangleF.Inflate(editing.Bounds, pad, pad).Contains(world.X, world.Y))
             {
-                caret = textInk.IndexAt(editing, world);
+                int at = textInk.IndexAt(editing, world);
+                long now = Environment.TickCount64;
+                var near = SystemInformation.DoubleClickSize;
+                bool doubleClick = now - lastTextClick <= SystemInformation.DoubleClickTime &&
+                    MathF.Abs(cursor.X - lastTextClickAt.X) <= near.Width && MathF.Abs(cursor.Y - lastTextClickAt.Y) <= near.Height;
+                lastTextClick = doubleClick ? 0 : now;   // a third click starts over
+                lastTextClickAt = cursor;
+                if (doubleClick) SelectWordAt(at);
+                else
+                {
+                    // Click puts the caret there (Shift+click selects up to it); dragging selects.
+                    MoveCaret(at, extend: InputHooks.IsDown(0x10));
+                    mode = Mode.SelectText;
+                    modeButton = MouseButtons.Left;
+                }
                 RestartCaretBlink();
                 Invalidate();
             }
@@ -1537,8 +1580,9 @@ public sealed partial class BoardForm : Form
     {
         editing = working;
         editOriginal = original;
-        caret = Math.Clamp(caretAt, 0, working.Text.Length);
+        caret = anchor = Math.Clamp(caretAt, 0, working.Text.Length);
         editHistory.Clear();
+        editRedo.Clear();
         hoverText = null;
         HiddenInCache = original;
         cacheDirty = true;
@@ -1593,43 +1637,112 @@ public sealed partial class BoardForm : Form
         {
             editHistory.Add((editing.Text, caret));
             if (editHistory.Count > 200) editHistory.RemoveAt(0);
+            editRedo.Clear();
         }
         editing.Text = text;
-        caret = Math.Clamp(newCaret, 0, text.Length);
+        caret = anchor = Math.Clamp(newCaret, 0, text.Length);
         textInk.Finish(editing);
         RestartCaretBlink();
         Invalidate();
     }
 
+    (int Start, int End) Selection => (Math.Min(anchor, caret), Math.Max(anchor, caret));
+
+    // Types (or pastes) over the selection, if there is one.
     void InsertText(string s)
     {
         if (editing == null) return;
         s = s.Replace("\r\n", "\n").Replace('\r', '\n').Replace("\t", "    ");
         s = new string(s.Where(ch => ch == '\n' || !char.IsControl(ch)).ToArray());
+        var (start, end) = Selection;
         // Text is only ever drawn, never run or opened, but a huge paste would freeze the layout.
-        int room = BoardStore.MaxTextLength - editing.Text.Length;
+        int room = BoardStore.MaxTextLength - (editing.Text.Length - (end - start));
         if (s.Length > room) s = s[..Math.Max(0, room)];
-        if (s.Length == 0) return;
-        SetEditText(editing.Text.Insert(caret, s), caret + s.Length);
+        if (s.Length == 0 && start == end) return;
+        SetEditText(editing.Text.Remove(start, end - start).Insert(start, s), start + s.Length);
     }
 
-    void MoveCaret(int index)
+    // Removes the selected text. False if nothing was selected.
+    bool DeleteSelection()
+    {
+        var (start, end) = Selection;
+        if (start == end) return false;
+        SetEditText(editing!.Text.Remove(start, end - start), start);
+        return true;
+    }
+
+    // Moves the caret; with extend (Shift held), the selection stretches along with it.
+    void MoveCaret(int index, bool extend = false)
     {
         caret = Math.Clamp(index, 0, editing!.Text.Length);
+        if (!extend) anchor = caret;
         RestartCaretBlink();
         Invalidate();
+    }
+
+    void SelectAll()
+    {
+        anchor = 0;
+        MoveCaret(editing!.Text.Length, extend: true);
+    }
+
+    void SelectWordAt(int index)
+    {
+        var text = editing!.Text;
+        int start = index, end = index;
+        if (index < text.Length && IsWordChar(text[index]) || index > 0 && IsWordChar(text[index - 1]))
+        {
+            while (start > 0 && IsWordChar(text[start - 1])) start--;
+            while (end < text.Length && IsWordChar(text[end])) end++;
+        }
+        else if (index < text.Length) end = NextIndex(index);
+        anchor = start;
+        MoveCaret(end, extend: true);
+    }
+
+    void CopySelection()
+    {
+        var (start, end) = Selection;
+        if (start == end) return;
+        try { Clipboard.SetText(editing!.Text[start..end]); }
+        catch (ExternalException) { }   // another app is holding the clipboard
+    }
+
+    // Letters, digits and emoji count as a word; spaces and punctuation separate words.
+    static bool IsWordChar(char c) => char.IsLetterOrDigit(c) || c == '_' || char.IsSurrogate(c) || char.GetUnicodeCategory(c) == System.Globalization.UnicodeCategory.NonSpacingMark;
+
+    // Ctrl+Left: to the start of this word, or of the one before.
+    int WordLeft(int i)
+    {
+        var text = editing!.Text;
+        while (i > 0 && char.IsWhiteSpace(text[i - 1])) i--;
+        if (i > 0 && IsWordChar(text[i - 1])) { while (i > 0 && IsWordChar(text[i - 1])) i--; }
+        else if (i > 0) i = PrevIndex(i);
+        return i;
+    }
+
+    // Ctrl+Right: past this word and the spaces after it, to the start of the next one.
+    int WordRight(int i)
+    {
+        var text = editing!.Text;
+        if (i < text.Length && IsWordChar(text[i])) { while (i < text.Length && IsWordChar(text[i])) i++; }
+        else if (i < text.Length) i = NextIndex(i);   // a space, line break or punctuation
+        while (i < text.Length && text[i] is ' ' or '\t') i++;
+        return i;
     }
 
     // Step over a whole emoji (two UTF-16 chars) instead of splitting it.
     int PrevIndex(int i) => i >= 2 && char.IsLowSurrogate(editing!.Text[i - 1]) ? i - 2 : Math.Max(0, i - 1);
     int NextIndex(int i) => i + 2 <= editing!.Text.Length && char.IsHighSurrogate(editing.Text[i]) ? i + 2 : Math.Min(editing.Text.Length, i + 1);
 
-    void MoveCaretVertically(int lines)
+    void MoveCaretVertically(int lines, bool extend)
     {
         var (top, height) = textInk.Caret(editing!, caret);
         var target = top + new Vector2(0, height * (lines > 0 ? 1.5f : -0.5f));
-        if (target.Y < editing!.Bounds.Top || target.Y > editing.Bounds.Bottom) return;
-        MoveCaret(textInk.IndexAt(editing, target));
+        // Past the first or last line: to the very start or end, like other editors.
+        if (target.Y < editing!.Bounds.Top) { MoveCaret(0, extend); return; }
+        if (target.Y > editing.Bounds.Bottom) { MoveCaret(editing.Text.Length, extend); return; }
+        MoveCaret(textInk.IndexAt(editing, target), extend);
     }
 
     void BeginMoveText()
@@ -1840,27 +1953,45 @@ public sealed partial class BoardForm : Form
         if (editing != null)
         {
             var text = editing.Text;
+            var (start, end) = Selection;
             switch (key)
             {
+                case Keys.Back or Keys.Delete when DeleteSelection(): return true;
                 case Keys.Back when caret > 0:
-                    int from = PrevIndex(caret);
+                    int from = control ? WordLeft(caret) : PrevIndex(caret);
                     SetEditText(text.Remove(from, caret - from), from);
                     return true;
                 case Keys.Delete when caret < text.Length:
-                    SetEditText(text.Remove(caret, NextIndex(caret) - caret), caret);
+                    int to = control ? WordRight(caret) : NextIndex(caret);
+                    SetEditText(text.Remove(caret, to - caret), caret);
                     return true;
-                case Keys.Left: MoveCaret(PrevIndex(caret)); return true;
-                case Keys.Right: MoveCaret(NextIndex(caret)); return true;
-                case Keys.Up: MoveCaretVertically(-1); return true;
-                case Keys.Down: MoveCaretVertically(1); return true;
-                case Keys.Home: MoveCaret(text.LastIndexOf('\n', Math.Max(0, caret - 1)) + 1); return true;
+                // Without Shift, Left / Right first just drop the selection at its start / end.
+                case Keys.Left when !shift && !control && start != end: MoveCaret(start); return true;
+                case Keys.Right when !shift && !control && start != end: MoveCaret(end); return true;
+                case Keys.Left: MoveCaret(control ? WordLeft(caret) : PrevIndex(caret), shift); return true;
+                case Keys.Right: MoveCaret(control ? WordRight(caret) : NextIndex(caret), shift); return true;
+                case Keys.Up: MoveCaretVertically(-1, shift); return true;
+                case Keys.Down: MoveCaretVertically(1, shift); return true;
+                case Keys.Home when control: MoveCaret(0, shift); return true;
+                case Keys.End when control: MoveCaret(text.Length, shift); return true;
+                case Keys.Home: MoveCaret(text.LastIndexOf('\n', Math.Max(0, caret - 1)) + 1, shift); return true;
                 case Keys.End:
-                    int end = text.IndexOf('\n', caret);
-                    MoveCaret(end < 0 ? text.Length : end);
+                    int lineEnd = text.IndexOf('\n', caret);
+                    MoveCaret(lineEnd < 0 ? text.Length : lineEnd, shift);
                     return true;
                 case Keys.Enter: InsertText("\n"); return true;
                 case Keys.Escape: CommitTextEdit(); return true;
+                case Keys.A when control: SelectAll(); return true;
+                case Keys.C when control: CopySelection(); return true;
+                case Keys.X when control:
+                    CopySelection();
+                    DeleteSelection();
+                    return true;
                 case Keys.V when control: PasteAtCursor(); return true;
+                case Keys.Z when control && shift:
+                case Keys.Y when control:
+                    RedoTyping();
+                    return true;
                 case Keys.Z when control: UndoAction(); return true;
                 case Keys.Back or Keys.Delete: return true;
                 default: return false;

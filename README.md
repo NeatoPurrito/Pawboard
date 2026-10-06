@@ -21,8 +21,9 @@ To quit, right-click the paw in the tray → **Exit Pawboard**.
 ## How it works
 
 Pick a tool from the toolbar at the bottom: pen, eraser, text, or the arrow to use your desktop
-normally. Scroll to zoom in, middle-drag to move around, right-drag to erase. The ☰ menu has
-save/open, dark mode, backgrounds and Start with Windows.
+normally. Scroll to zoom in, middle-drag to move around, right-drag to erase. The ⌄ button
+shrinks the toolbar down to just the arrow and the pen. The ☰ menu has save/open, dark mode,
+backgrounds, Lock zoom and Start with Windows.
 
 It saves by itself and uses no CPU when you're not drawing.
 
@@ -41,9 +42,13 @@ In a text box:
 |---|---|
 | Enter | New line |
 | Esc | Done |
-| Ctrl+V | Paste |
-| Ctrl+Z | Undo typing |
-| Arrows, Home, End | Move the cursor |
+| Ctrl+A / C / X / V | Select all / copy / cut / paste |
+| Ctrl+Z / Ctrl+Y | Undo / redo typing |
+| Arrows, Home, End | Move the cursor (Ctrl: by word, or to the very start / end) |
+| Shift + any of those, or drag | Select |
+| Double-click | Select a word |
+| Drag the dots above the box | Move it |
+
 ## Privacy
 
 No internet access at all. To catch clicks on the desktop it watches the mouse, and it only reads

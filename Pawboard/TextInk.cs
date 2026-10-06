@@ -50,5 +50,19 @@ public sealed class TextInk : IDisposable
         return Math.Clamp((int)hit.TextPosition + (trailing ? (int)hit.Length : 0), 0, t.Text.Length);
     }
 
+    // World-space rectangles covering the characters [start, end), one per line piece.
+    public List<RectangleF> SelectionRects(TextItem t, int start, int end)
+    {
+        var rects = new List<RectangleF>();
+        if (end <= start || t.Layout == null) return rects;
+        foreach (var m in t.Layout.HitTestTextRange((uint)start, (uint)(end - start), 0, 0))
+        {
+            // A selected line break has no width; show a sliver so you can see it's included.
+            float w = MathF.Max(m.Width, ReferenceSize * 0.2f);
+            rects.Add(new RectangleF(t.Position.X + m.Left * t.Scale, t.Position.Y + m.Top * t.Scale, w * t.Scale, m.Height * t.Scale));
+        }
+        return rects;
+    }
+
     public void Dispose() => format.Dispose();
 }

@@ -443,7 +443,7 @@ public sealed partial class BoardForm
         var keys = (Keys)vk;
         bool editKey = keys is Keys.Back or Keys.Delete or Keys.Left or Keys.Right or Keys.Up or Keys.Down
             or Keys.Home or Keys.End or Keys.Enter or Keys.Escape;
-        bool shortcut = ctrl && !altGr && keys is Keys.V or Keys.Z or Keys.Y;
+        bool shortcut = ctrl && !altGr && keys is Keys.A or Keys.C or Keys.X or Keys.V or Keys.Z or Keys.Y;
         if (editKey || shortcut)
         {
             claimedKeys.Add(vk);
