@@ -10,9 +10,18 @@ public sealed partial class BoardForm
     // The whole board, in world units: the start view (zoom 1, world origin at the top-left).
     RectangleF BoardBounds => new(0, 0, ClientDips.X, ClientDips.Y);
 
+    // Lock zoom (in the menu): always the start view. The wheel and middle button are then left
+    // to Windows; read from the hook thread too.
+    volatile bool zoomLocked;
+
     // Keeps the view inside the board.
     void ClampView()
     {
+        if (zoomLocked)
+        {
+            zoom = targetZoom = 1;
+            zooming = coasting = false;
+        }
         if (zoom < MinZoom) zoom = MinZoom;
         if (targetZoom < MinZoom) targetZoom = MinZoom;
         var b = BoardBounds;
@@ -34,6 +43,14 @@ public sealed partial class BoardForm
         zoom = targetZoom = 1;
         offset = Vector2.Zero;
         cacheDirty = true;
+        Invalidate();
+    }
+
+    void ToggleZoomLock()
+    {
+        zoomLocked = !zoomLocked;
+        if (zoomLocked) GoHome();
+        SaveSettings();
         Invalidate();
     }
 }

@@ -282,6 +282,7 @@ public static class BoardStore
         public string Background { get; set; } = "Dots";   // Dots, Lines, Squares or Plain
         public float PatternStrength { get; set; } = 0.5f;   // 0 faint, 0.5 normal, 1 strong
         public bool ToolbarHidden { get; set; }
+        public bool ZoomLocked { get; set; }
     }
 
     static string SettingsPath => Path.Combine(Folder, "settings.json");

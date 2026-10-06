@@ -160,6 +160,7 @@ public sealed partial class BoardForm : Form
         if (!Enum.TryParse(settings.Background, out backdrop)) backdrop = Backdrop.Dots;
         patternStrength = float.IsFinite(settings.PatternStrength) ? Math.Clamp(settings.PatternStrength, 0, 1) : 0.5f;
         toolbarHidden = settings.ToolbarHidden;
+        zoomLocked = settings.ZoomLocked;
         ApplyWindowTheme();
         SetPointer(Cursors.Cross);
         KeyPreview = true;
@@ -195,6 +196,7 @@ public sealed partial class BoardForm : Form
         var data = BoardStore.Load();
         offset = new Vector2(data.ViewX, data.ViewY);
         zoom = targetZoom = Math.Clamp(data.Zoom, MinZoom, MaxZoom);
+        if (zoomLocked) { zoom = targetZoom = 1; offset = Vector2.Zero; }
         board.Items.AddRange(LoadItems(data.Items, out bool cleaned));
         // Erased ink found in the saved board is gone now; save soon so the file is clean too.
         saveAfterLoad = cleaned;
@@ -1131,7 +1133,7 @@ public sealed partial class BoardForm : Form
             return;
         }
 
-        if (button == MouseButtons.Middle) BeginPan(button);
+        if (button == MouseButtons.Middle) { if (!zoomLocked) BeginPan(button); }
         else if (button == MouseButtons.Right) BeginErase(button);   // right-drag erases with any tool
         else if (button == MouseButtons.Left)
         {
@@ -1219,7 +1221,7 @@ public sealed partial class BoardForm : Form
 
     void PointerWheel(int delta, System.Drawing.Point location)
     {
-        if (mode != Mode.None && mode != Mode.Pan) return;
+        if (zoomLocked || (mode != Mode.None && mode != Mode.Pan)) return;
         var p = ToDip(location);
         coasting = false;
         float next = Math.Clamp(targetZoom * MathF.Pow(1.2f, delta / 120f), MinZoom, MaxZoom);

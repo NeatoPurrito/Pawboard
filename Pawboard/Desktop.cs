@@ -137,6 +137,30 @@ static class Desktop
         return r.Left <= m.Left && r.Top <= m.Top && r.Right >= m.Right && r.Bottom >= m.Bottom;
     }
 
+    // Closes the desktop's right-click menu if it's open. Clicks the board takes never reach
+    // Explorer, so without this the menu would stay open while you draw. Windows 11's menu is an
+    // Explorer XAML window that has the focus while it's open and closes on Esc; the classic one
+    // ("Show more options") is a #32768 menu window, ended by cancelling its owner's menu mode.
+    public static void CloseShellMenu()
+    {
+        var foreground = GetForegroundWindow();
+        GetWindowThreadProcessId(GetShellWindow(), out uint shell);
+        GetWindowThreadProcessId(foreground, out uint pid);
+        if (shell != 0 && pid == shell && ClassName(foreground) == "XamlExplorerHostIslandWindow")
+            InputHooks.PressEscape();
+
+        const uint WM_CANCELMODE = 0x1F;
+        for (nint menu = FindWindowEx(0, 0, "#32768", null); menu != 0; menu = FindWindowEx(0, menu, "#32768", null))
+        {
+            if (!IsWindowVisible(menu)) continue;
+            uint thread = GetWindowThreadProcessId(menu, out pid);
+            if (pid != shell) continue;
+            var info = new GUITHREADINFO { cbSize = Marshal.SizeOf<GUITHREADINFO>() };
+            if (GetGUIThreadInfo(thread, ref info) && info.hwndMenuOwner != 0)
+                PostMessage(info.hwndMenuOwner, WM_CANCELMODE, 0, 0);
+        }
+    }
+
     static string ClassName(nint hwnd)
     {
         var sb = new StringBuilder(64);
@@ -264,6 +288,15 @@ static class Desktop
     [StructLayout(LayoutKind.Sequential)]
     struct MONITORINFO { public int cbSize; public RECT rcMonitor, rcWork; public uint dwFlags; }
 
+    [StructLayout(LayoutKind.Sequential)]
+    struct GUITHREADINFO
+    {
+        public int cbSize;
+        public uint flags;
+        public nint hwndActive, hwndFocus, hwndCapture, hwndMenuOwner, hwndMoveSize, hwndCaret;
+        public RECT rcCaret;
+    }
+
     delegate bool EnumWindowsProc(nint hwnd, nint lParam);
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern nint FindWindow(string cls, string? title);
@@ -286,4 +319,9 @@ static class Desktop
     [DllImport("user32.dll")] static extern bool GetWindowRect(nint hwnd, out RECT r);
     [DllImport("user32.dll")] static extern nint MonitorFromWindow(nint hwnd, uint flags);
     [DllImport("user32.dll")] static extern bool GetMonitorInfo(nint monitor, ref MONITORINFO info);
+    [DllImport("user32.dll")] static extern nint GetForegroundWindow();
+    [DllImport("user32.dll")] static extern nint GetShellWindow();
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(nint hwnd, out uint pid);
+    [DllImport("user32.dll")] static extern bool GetGUIThreadInfo(uint thread, ref GUITHREADINFO info);
+    [DllImport("user32.dll")] static extern bool PostMessage(nint hwnd, uint msg, nint wParam, nint lParam);
 }

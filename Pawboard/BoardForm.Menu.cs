@@ -53,6 +53,7 @@ public sealed partial class BoardForm
                 Background = backdrop.ToString(),
                 PatternStrength = patternStrength,
                 ToolbarHidden = toolbarHidden,
+                ZoomLocked = zoomLocked,
             });
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }   // just won't be remembered
@@ -131,7 +132,7 @@ public sealed partial class BoardForm
         menuButtons.Clear();
         if (!menuOpen) return;
         const float pad = 6, row = 36, caption = 24, chipH = 58, sliderH = 32, divider = 9;
-        float h = pad + row * 3 + divider + caption + chipH + sliderH + divider + row * 2 + pad;
+        float h = pad + row * 3 + divider + caption + chipH + sliderH + divider + row * 3 + pad;
         float x = toolbarRect.Right - MenuWidth, y = toolbarRect.Top - 8 - h;
         menuRect = new RectangleF(x, y, MenuWidth, h);
 
@@ -145,7 +146,8 @@ public sealed partial class BoardForm
         float cy = y + pad;
         MenuRow(r, x, ref cy, row, "\uE74E", "Save a copy…", () => FromMenu(SaveBoardAs));
         MenuRow(r, x, ref cy, row, "\uE8E5", "Open a board…", () => FromMenu(OpenBoard));
-        MenuRow(r, x, ref cy, row, "\uE80F", "Back to start", () => { CloseMenu(); GoHome(); });
+        // Locked, you're always at the start already.
+        MenuRow(r, x, ref cy, row, "\uE80F", "Back to start", zoomLocked ? null : () => { CloseMenu(); GoHome(); });
         MenuDivider(r, x, ref cy, divider);
 
         brush.Color = Colors.Faint(0.5f);
@@ -180,6 +182,7 @@ public sealed partial class BoardForm
 
         // Switches.
         SwitchRow(r, x, ref cy, row, dark ? SunIcon : MoonIcon, "Dark mode", dark, ToggleDark);
+        SwitchRow(r, x, ref cy, row, "", "Lock zoom", zoomLocked, ToggleZoomLock);
         SwitchRow(r, x, ref cy, row, "\uE7E8", "Start with Windows", autostartOn, ToggleAutostart);
     }
 
@@ -260,13 +263,14 @@ public sealed partial class BoardForm
         Invalidate();
     }
 
-    void MenuRow(ID2D1RenderTarget r, float x, ref float cy, float row, string icon, string label, Action click)
+    // A null click draws the row greyed out.
+    void MenuRow(ID2D1RenderTarget r, float x, ref float cy, float row, string icon, string label, Action? click)
     {
         var rect = new RectangleF(x + 6, cy, MenuWidth - 12, row);
-        brush!.Color = Colors.Icon;
+        brush!.Color = click != null ? Colors.Icon : WithAlpha(Colors.Icon, Colors.Icon.A * 0.35f);
         r.DrawText(icon, iconFont, new DRect(rect.X + 4, cy, 28, row), brush);
         r.DrawText(label, menuFont!, new DRect(rect.X + 40, cy, rect.Width - 44, row), brush);
-        menuButtons.Add((rect, click));
+        if (click != null) menuButtons.Add((rect, click));
         cy += row;
     }
 

@@ -370,13 +370,15 @@ public sealed partial class BoardForm
                     return false;
                 }
                 hookCapture = MouseButtons.Left;
+                BeginInvoke(Desktop.CloseShellMenu);   // Explorer won't see this click to close its menu
                 BeginInvoke(() => PointerDown(MouseButtons.Left, client));
                 return true;
             }
             case InputHooks.WM_MBUTTONDOWN:
             {
-                if (!Desktop.IsDesktopAt(screen) || OverIcon(screen)) return false;
+                if (zoomLocked || !Desktop.IsDesktopAt(screen) || OverIcon(screen)) return false;
                 hookCapture = MouseButtons.Middle;
+                BeginInvoke(Desktop.CloseShellMenu);
                 BeginInvoke(() => PointerDown(MouseButtons.Middle, client));
                 return true;
             }
@@ -389,6 +391,7 @@ public sealed partial class BoardForm
                 var dip = new System.Numerics.Vector2(client.X, client.Y) / hookDpiScale;
                 if (toolbarRect.Contains(dip.X, dip.Y)) return false;
                 hookCapture = MouseButtons.Right;
+                BeginInvoke(Desktop.CloseShellMenu);
                 rightUndecided = true;
                 rightPressScreen = screen;
                 rightPressClient = client;
@@ -397,7 +400,7 @@ public sealed partial class BoardForm
             case InputHooks.WM_MOUSEWHEEL:
             {
                 // Ctrl+wheel stays with Windows: it resizes the desktop icons.
-                if (InputHooks.IsDown(0x11) || !Desktop.IsDesktopAt(screen)) return false;
+                if (zoomLocked || InputHooks.IsDown(0x11) || !Desktop.IsDesktopAt(screen)) return false;
                 BeginInvoke(() => PointerWheel(wheel, client));
                 return true;
             }

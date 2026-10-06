@@ -166,14 +166,35 @@ sealed class InputHooks : IDisposable
         SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
     }
 
+    // Presses and releases Esc, as if by hand (closes the desktop's right-click menu).
+    public static void PressEscape()
+    {
+        const uint INPUT_KEYBOARD = 1, KEYEVENTF_KEYUP = 0x2;
+        const ushort VK_ESCAPE = 0x1B;
+        var inputs = new[]
+        {
+            new KeyInput { type = INPUT_KEYBOARD, ki = new KEYBDINPUT { wVk = VK_ESCAPE } },
+            new KeyInput { type = INPUT_KEYBOARD, ki = new KEYBDINPUT { wVk = VK_ESCAPE, dwFlags = KEYEVENTF_KEYUP } },
+        };
+        SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<KeyInput>());
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     struct MOUSEINPUT { public int dx, dy; public uint mouseData, dwFlags, time; public nint dwExtraInfo; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct KEYBDINPUT { public ushort wVk, wScan; public uint dwFlags, time; public nint dwExtraInfo; }
+
+    // The keyboard form of INPUT, padded to the full union size (40 bytes; Pawboard is x64 only).
+    [StructLayout(LayoutKind.Explicit, Size = 40)]
+    struct KeyInput { [FieldOffset(0)] public uint type; [FieldOffset(8)] public KEYBDINPUT ki; }
 
     // INPUT is a union of mouse/keyboard/hardware input; the mouse part is the largest, so it sets the size.
     [StructLayout(LayoutKind.Sequential)]
     struct INPUT { public uint type; public MOUSEINPUT mi; }
 
     [DllImport("user32.dll")] static extern uint SendInput(uint count, INPUT[] inputs, int size);
+    [DllImport("user32.dll")] static extern uint SendInput(uint count, KeyInput[] inputs, int size);
 
     // ---------- Win32 ----------
 
