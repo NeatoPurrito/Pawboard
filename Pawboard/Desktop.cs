@@ -146,7 +146,8 @@ static class Desktop
         var foreground = GetForegroundWindow();
         GetWindowThreadProcessId(GetShellWindow(), out uint shell);
         GetWindowThreadProcessId(foreground, out uint pid);
-        if (shell != 0 && pid == shell && ClassName(foreground) == "XamlExplorerHostIslandWindow")
+        // The class name varies by Windows build (e.g. a "_WASDK" suffix), so match its start.
+        if (shell != 0 && pid == shell && ClassName(foreground).StartsWith("XamlExplorerHostIslandWindow", StringComparison.Ordinal))
             InputHooks.PressEscape();
 
         const uint WM_CANCELMODE = 0x1F;
