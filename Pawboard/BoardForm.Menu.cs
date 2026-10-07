@@ -147,7 +147,7 @@ public sealed partial class BoardForm
         menuButtons.Clear();
         if (!menuOpen) return;
         const float pad = 6, row = 36, caption = 24, chipH = 58, sliderH = 32, divider = 9;
-        float h = pad + row * 3 + divider + caption + chipH + sliderH + row + (showDesktopImage ? sliderH : 0) + divider + row * 3 + pad;
+        float h = pad + row * 4 + divider + caption + chipH + sliderH + row + (showDesktopImage ? sliderH : 0) + divider + row * 3 + pad;
         float x = toolbarRect.Right - MenuWidth, y = toolbarRect.Top - 8 - h;
         menuRect = new RectangleF(x, y, MenuWidth, h);
 
@@ -161,6 +161,7 @@ public sealed partial class BoardForm
         float cy = y + pad;
         MenuRow(r, x, ref cy, row, "\uE74E", "Save a copy…", () => FromMenu(SaveBoardAs));
         MenuRow(r, x, ref cy, row, "\uE8E5", "Open a board…", () => FromMenu(OpenBoard));
+        MenuRow(r, x, ref cy, row, "\uEE71", "Save as picture…", () => FromMenu(SaveAsPicture));
         // Locked, you're always at the start already.
         MenuRow(r, x, ref cy, row, "\uE80F", "Back to start", zoomLocked ? null : () => { CloseMenu(); GoHome(); });
         MenuDivider(r, x, ref cy, divider);

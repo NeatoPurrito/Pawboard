@@ -122,21 +122,7 @@ public sealed partial class BoardForm
             }
             var layer = rt.CreateCompatibleRenderTarget(null, null, null, CompatibleRenderTargetOptions.None);
             layer.BeginDraw();
-            uint c = info.BackgroundColor;   // COLORREF: 0x00BBGGRR
-            layer.Clear(new Color4((c & 0xFF) / 255f, ((c >> 8) & 0xFF) / 255f, ((c >> 16) & 0xFF) / 255f, 1));
-            using var wic = new IWICImagingFactory();
-            if (info.Position == DesktopImage.Fit.Span)
-            {
-                // One picture across all monitors.
-                var all = info.Monitors.Select(m => m.Bounds).Aggregate(Rectangle.Union);
-                var path = info.Monitors.FirstOrDefault(m => m.Path != null)?.Path;
-                if (path != null) DrawWallpaperPicture(layer, wic, path, all, DesktopImage.Fit.Fill);
-            }
-            else
-            {
-                foreach (var m in info.Monitors)
-                    if (m.Path != null) DrawWallpaperPicture(layer, wic, m.Path, m.Bounds, info.Position);
-            }
+            PaintWallpaper(layer, info);
             if (layer.EndDraw().Failure) { layer.Dispose(); DiscardDevice(); return; }
             desktopImageLayer = layer;
         }
@@ -148,8 +134,28 @@ public sealed partial class BoardForm
         }
     }
 
+    // The wallpaper as Windows shows it, at screen size: the layer, or a saved picture of the board.
+    void PaintWallpaper(ID2D1RenderTarget target, DesktopImage.Info info)
+    {
+        uint c = info.BackgroundColor;   // COLORREF: 0x00BBGGRR
+        target.Clear(new Color4((c & 0xFF) / 255f, ((c >> 8) & 0xFF) / 255f, ((c >> 16) & 0xFF) / 255f, 1));
+        using var wic = new IWICImagingFactory();
+        if (info.Position == DesktopImage.Fit.Span)
+        {
+            // One picture across all monitors.
+            var all = info.Monitors.Select(m => m.Bounds).Aggregate(Rectangle.Union);
+            var path = info.Monitors.FirstOrDefault(m => m.Path != null)?.Path;
+            if (path != null) DrawWallpaperPicture(target, wic, path, all, DesktopImage.Fit.Fill);
+        }
+        else
+        {
+            foreach (var m in info.Monitors)
+                if (m.Path != null) DrawWallpaperPicture(target, wic, m.Path, m.Bounds, info.Position);
+        }
+    }
+
     // One picture into one screen area (screen pixels), fitted the way Windows fits it.
-    void DrawWallpaperPicture(ID2D1BitmapRenderTarget layer, IWICImagingFactory wic, string path, Rectangle area, DesktopImage.Fit fit)
+    void DrawWallpaperPicture(ID2D1RenderTarget layer, IWICImagingFactory wic, string path, Rectangle area, DesktopImage.Fit fit)
     {
         // Wallpapers are ordinary pictures, but a broken or gigantic file shouldn't hang the board.
         if (new FileInfo(path).Length > 200L * 1024 * 1024) return;
