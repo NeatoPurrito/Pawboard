@@ -17,7 +17,9 @@ public sealed partial class BoardForm
 
     Backdrop backdrop = Backdrop.Dots;
     float patternStrength = 0.5f;   // 0 faint, 0.5 the normal look, 1 strong
-    RectangleF sliderTrack;         // where the strength slider's track is, for dragging
+    enum Slider { Pattern, Veil }   // pattern strength, and how much the board colour covers the wallpaper
+    Slider activeSlider;
+    RectangleF patternTrack, veilTrack;   // where each slider's track is, for dragging
     bool menuOpen;
     RectangleF menuRect;
     RectangleF menuButtonRect;
@@ -54,6 +56,8 @@ public sealed partial class BoardForm
                 PatternStrength = patternStrength,
                 ToolbarHidden = toolbarHidden,
                 ZoomLocked = zoomLocked,
+                ShowWallpaper = showDesktopImage,
+                WallpaperVeil = imageVeil,
             });
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }   // just won't be remembered
@@ -79,8 +83,9 @@ public sealed partial class BoardForm
         return new Color4(a.R + (b.R - a.R) * u, a.G + (b.G - a.G) * u, a.B + (b.B - a.B) * u, baseAlpha + (1 - baseAlpha) * u);
     }
 
-    void BeginSlide()
+    void BeginSlide(Slider which)
     {
+        activeSlider = which;
         mode = Mode.Slide;
         modeButton = MouseButtons.Left;
         SlideTo(cursor.X);
@@ -88,11 +93,21 @@ public sealed partial class BoardForm
 
     void SlideTo(float x)
     {
-        float t = Math.Clamp((x - sliderTrack.Left) / sliderTrack.Width, 0, 1);
-        if (MathF.Abs(t - 0.5f) < 0.03f) t = 0.5f;   // easy to land back on the normal look
-        if (t == patternStrength) return;
-        patternStrength = t;
-        contentVersion++;
+        var track = activeSlider == Slider.Pattern ? patternTrack : veilTrack;
+        float t = Math.Clamp((x - track.Left) / track.Width, 0, 1);
+        if (activeSlider == Slider.Pattern)
+        {
+            if (MathF.Abs(t - 0.5f) < 0.03f) t = 0.5f;   // easy to land back on the normal look
+            if (t == patternStrength) return;
+            patternStrength = t;
+            contentVersion++;
+        }
+        else
+        {
+            // The veil isn't part of the zoom picture, so that one can stay as it is.
+            if (t == imageVeil) return;
+            imageVeil = t;
+        }
         cacheDirty = true;
         Invalidate();
     }
@@ -132,7 +147,7 @@ public sealed partial class BoardForm
         menuButtons.Clear();
         if (!menuOpen) return;
         const float pad = 6, row = 36, caption = 24, chipH = 58, sliderH = 32, divider = 9;
-        float h = pad + row * 3 + divider + caption + chipH + sliderH + divider + row * 3 + pad;
+        float h = pad + row * 3 + divider + caption + chipH + sliderH + row + (showDesktopImage ? sliderH : 0) + divider + row * 3 + pad;
         float x = toolbarRect.Right - MenuWidth, y = toolbarRect.Top - 8 - h;
         menuRect = new RectangleF(x, y, MenuWidth, h);
 
@@ -176,8 +191,14 @@ public sealed partial class BoardForm
             cx += chipW + 6;
         }
         cy += chipH;
-        DrawStrengthSlider(r, new RectangleF(x + pad, cy, MenuWidth - pad * 2, sliderH));
+        DrawSlider(r, new RectangleF(x + pad, cy, MenuWidth - pad * 2, sliderH), Slider.Pattern, patternStrength, backdrop != Backdrop.Plain);
         cy += sliderH;
+        SwitchRow(r, x, ref cy, row, "", "Show my wallpaper", showDesktopImage, ToggleDesktopImage);
+        if (showDesktopImage)
+        {
+            DrawSlider(r, new RectangleF(x + pad, cy, MenuWidth - pad * 2, sliderH), Slider.Veil, imageVeil, ShowingDesktopImage);
+            cy += sliderH;
+        }
         MenuDivider(r, x, ref cy, divider);
 
         // Switches.
@@ -186,11 +207,11 @@ public sealed partial class BoardForm
         SwitchRow(r, x, ref cy, row, "\uE7E8", "Start with Windows", autostartOn, ToggleAutostart);
     }
 
-    // How strong the pattern is: a small faint dot on the left, a bigger strong one on the right,
-    // with a tick in the middle for the normal look. Greyed out when there's no pattern.
-    void DrawStrengthSlider(ID2D1RenderTarget r, RectangleF slot)
+    // A slider from a small faint dot on the left to a bigger strong one on the right: how strong
+    // the pattern is (with a tick in the middle for the normal look), or how much the board colour
+    // covers the wallpaper. Greyed out when there's nothing for it to change.
+    void DrawSlider(ID2D1RenderTarget r, RectangleF slot, Slider which, float value, bool enabled)
     {
-        bool enabled = backdrop != Backdrop.Plain;
         float cy = slot.Y + slot.Height / 2 - 2;
         float dim = enabled ? 1 : 0.4f;
         brush!.Color = Colors.Faint(0.25f * dim);
@@ -198,17 +219,21 @@ public sealed partial class BoardForm
         brush.Color = Colors.Faint(0.6f * dim);
         r.FillEllipse(new Ellipse(new Vector2(slot.Right - 14, cy), 4.5f, 4.5f), brush);
 
-        sliderTrack = new RectangleF(slot.X + 32, cy - 2, slot.Width - 64, 4);
-        float knobX = sliderTrack.Left + sliderTrack.Width * patternStrength;
+        var track = new RectangleF(slot.X + 32, cy - 2, slot.Width - 64, 4);
+        if (which == Slider.Pattern) patternTrack = track; else veilTrack = track;
+        float knobX = track.Left + track.Width * value;
         brush.Color = Colors.Faint(dark ? 0.16f : 0.12f);
-        r.FillRoundedRectangle(new RoundedRectangle(sliderTrack, 2, 2), brush);
-        brush.Color = Colors.Faint(dark ? 0.35f : 0.3f);
-        float mid = MathF.Round(sliderTrack.Left + sliderTrack.Width / 2) + 0.5f;
-        r.DrawLine(new Vector2(mid, cy - 6), new Vector2(mid, cy + 6), brush, 1f);
+        r.FillRoundedRectangle(new RoundedRectangle(track, 2, 2), brush);
+        if (which == Slider.Pattern)
+        {
+            brush.Color = Colors.Faint(dark ? 0.35f : 0.3f);
+            float mid = MathF.Round(track.Left + track.Width / 2) + 0.5f;
+            r.DrawLine(new Vector2(mid, cy - 6), new Vector2(mid, cy + 6), brush, 1f);
+        }
         if (enabled)
         {
             brush.Color = Colors.Accent;
-            r.FillRoundedRectangle(new RoundedRectangle(new RectangleF(sliderTrack.X, sliderTrack.Y, knobX - sliderTrack.X, 4), 2, 2), brush);
+            r.FillRoundedRectangle(new RoundedRectangle(new RectangleF(track.X, track.Y, knobX - track.X, 4), 2, 2), brush);
         }
 
         var knob = new Ellipse(new Vector2(knobX, cy), 8, 8);
@@ -219,7 +244,7 @@ public sealed partial class BoardForm
         brush.Color = enabled ? Colors.Accent : Colors.PanelBorder;
         r.DrawEllipse(knob, brush, enabled ? 1.5f : 1f);
 
-        if (enabled) menuButtons.Add((slot, BeginSlide));
+        if (enabled) menuButtons.Add((slot, () => BeginSlide(which)));
     }
 
     void SwitchRow(ID2D1RenderTarget r, float x, ref float cy, float row, string icon, string label, bool on, Action toggle)

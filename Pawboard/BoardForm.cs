@@ -168,6 +168,8 @@ public sealed partial class BoardForm : Form
         patternStrength = float.IsFinite(settings.PatternStrength) ? Math.Clamp(settings.PatternStrength, 0, 1) : 0.5f;
         toolbarHidden = settings.ToolbarHidden;
         zoomLocked = settings.ZoomLocked;
+        showDesktopImage = settings.ShowWallpaper;
+        imageVeil = float.IsFinite(settings.WallpaperVeil) ? Math.Clamp(settings.WallpaperVeil, 0, 1) : 0.6f;
         ApplyWindowTheme();
         SetPointer(Cursors.Cross);
         KeyPreview = true;
@@ -193,6 +195,7 @@ public sealed partial class BoardForm : Form
         saveTimer.Tick += (_, _) => { saveTimer.Stop(); SaveBoard(); };
         caretTimer.Tick += (_, _) => { caretOn = !caretOn; Invalidate(); };
         noticeTimer.Tick += (_, _) => HideNotice();
+        StartDesktopImageWatch();
         if (saveAfterLoad) saveTimer.Start();
     }
 
@@ -302,6 +305,7 @@ public sealed partial class BoardForm : Form
         caretTimer.Dispose();
         noticeTimer.Dispose();
         saveTimer.Dispose();
+        StopDesktopImageWatch();
         DiscardDevice();
         activeGeometry?.Dispose();
         board.ReleaseAll();
@@ -363,6 +367,8 @@ public sealed partial class BoardForm : Form
     {
         cache?.Dispose(); cache = null;
         boardPicture?.Dispose(); boardPicture = null;
+        desktopImageLayer?.Dispose(); desktopImageLayer = null;
+        desktopImageDirty = true;
         brush?.Dispose(); brush = null;
         rt?.Dispose(); rt = null;
     }
@@ -374,6 +380,10 @@ public sealed partial class BoardForm : Form
         rt.Resize(new SizeI(ClientSize.Width, ClientSize.Height));
         cache?.Dispose(); cache = null;
         boardPicture?.Dispose(); boardPicture = null;
+        // The screen layout may have changed: read the wallpaper's monitors again.
+        desktopImageLayer?.Dispose(); desktopImageLayer = null;
+        desktopImageDirty = true;
+        desktopImageInfo = null;
         ClampView();
         cacheDirty = true;
         Invalidate();
@@ -420,6 +430,8 @@ public sealed partial class BoardForm : Form
     {
         EnsureDevice();
         Animate();
+        EnsureDesktopImageLayer();
+        if (rt == null) { Invalidate(); return; }   // the device was lost painting the wallpaper
         if (cache == null)
         {
             cache = rt!.CreateCompatibleRenderTarget(null, null, null, CompatibleRenderTargetOptions.None);
@@ -449,6 +461,8 @@ public sealed partial class BoardForm : Form
         r.Transform = Matrix3x2.Identity;
         if (scalePicture)
         {
+            // The wallpaper stays put; only the board on top of it (see-through then) zooms.
+            if (ShowingDesktopImage) DrawDesktopImage(r);
             r.Transform = ViewTransform;
             r.DrawBitmap(boardPicture!.Bitmap, 1f, BitmapInterpolationMode.Linear);
             r.Transform = Matrix3x2.Identity;
@@ -490,19 +504,20 @@ public sealed partial class BoardForm : Form
         // Paint the start view (100%, which is the whole board) into the picture.
         var (viewOffset, viewZoom) = (offset, zoom);
         (offset, zoom) = (Vector2.Zero, 1);
-        bool painted = PaintBoard(boardPicture);
+        bool painted = PaintBoard(boardPicture, seeThrough: ShowingDesktopImage);
         (offset, zoom) = (viewOffset, viewZoom);
         if (painted) boardPictureVersion = contentVersion;
     }
 
     // Background, pattern and every visible item, at the current view. False if the device was lost.
-    bool PaintBoard(ID2D1BitmapRenderTarget c)
+    // seeThrough leaves out the background (the wallpaper goes under it separately).
+    bool PaintBoard(ID2D1BitmapRenderTarget c, bool seeThrough = false)
     {
         c.BeginDraw();
         c.Transform = Matrix3x2.Identity;
-        c.Clear(Colors.Background);
+        c.Clear(seeThrough ? new Color4(0, 0, 0, 0) : Colors.Background);
+        if (!seeThrough && ShowingDesktopImage) DrawDesktopImage(c);
         DrawBackdrop(c);
-
 
         var view = VisibleWorldRect();
         foreach (var item in eraseWorking ?? board.Items)

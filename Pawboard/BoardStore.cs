@@ -283,6 +283,8 @@ public static class BoardStore
         public float PatternStrength { get; set; } = 0.5f;   // 0 faint, 0.5 normal, 1 strong
         public bool ToolbarHidden { get; set; }
         public bool ZoomLocked { get; set; }
+        public bool ShowWallpaper { get; set; }
+        public float WallpaperVeil { get; set; } = 0.6f;     // 0 the picture as is, 1 plain board colour
     }
 
     static string SettingsPath => Path.Combine(Folder, "settings.json");
