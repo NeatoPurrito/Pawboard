@@ -56,8 +56,8 @@ public sealed partial class BoardForm
     IWin32Window? DialogOwner => wallpaper ? null : this;
 
     (Tool, string)[] ToolButtons => wallpaper
-        ? [(Tool.Desktop, DesktopIcon), (Tool.Pen, PenIcon), (Tool.Eraser, EraserIcon), (Tool.Text, TextIcon)]
-        : [(Tool.Pen, PenIcon), (Tool.Eraser, EraserIcon), (Tool.Text, TextIcon)];
+        ? [(Tool.Desktop, DesktopIcon), (Tool.Pen, PenIcon), (Tool.Eraser, EraserIcon), (Tool.Text, TextIcon), (Tool.Lasso, LassoIcon)]
+        : [(Tool.Pen, PenIcon), (Tool.Eraser, EraserIcon), (Tool.Text, TextIcon), (Tool.Lasso, LassoIcon)];
 
     // Where the toolbar sits, in client DIPs: the window, or above the taskbar on the main monitor.
     RectangleF ToolbarArea
@@ -371,7 +371,8 @@ public sealed partial class BoardForm
                 }
                 var dip = new System.Numerics.Vector2(client.X, client.Y) / hookDpiScale;
                 // While the menu is open, any click on the desktop is the board's (it closes the menu).
-                bool onToolbar = toolbarRect.Contains(dip.X, dip.Y) || menuOpen;
+                bool onToolbar = toolbarRect.Contains(dip.X, dip.Y) || menuOpen ||
+                    (tool == Tool.Lasso && pickedHitRect.Contains(dip.X, dip.Y));   // the lasso's picks and bin button
                 if (!onToolbar && (tool == Tool.Desktop || OverIcon(screen)))
                 {
                     if (editing != null) BeginInvoke(CommitTextEdit);

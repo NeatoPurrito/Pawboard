@@ -18,7 +18,8 @@ namespace Pawboard;
 public sealed partial class BoardForm : Form
 {
     // Desktop: the board steps aside so icons and the desktop work as usual (wallpaper mode only).
-    enum Tool { Pen, Eraser, Text, Desktop }
+    // Pen, Eraser and Text come first: they index ToolSizes.
+    enum Tool { Pen, Eraser, Text, Desktop, Lasso }
 
     static readonly uint[] Palette = [0xFF1E1E1E, 0xFF1971C2, 0xFFE03131, 0xFF2F9E44, 0xFFF08C00];
     // Per tool, five sizes in screen DIPs: pen width, eraser radius, text height.
@@ -32,7 +33,8 @@ public sealed partial class BoardForm : Form
     const float MinZoom = 1f, MaxZoom = 8f;
     const string IconFont = "Segoe Fluent Icons";
     const string PenIcon = "\uE70F", EraserIcon = "\uE75C", TextIcon = "\uE8D2", UndoIcon = "\uE7A7", RedoIcon = "\uE7A6";
-    const string DesktopIcon = "\uE8B0", HideIcon = "\uE70D", ExpandIcon = "\uE70E";
+    const string DesktopIcon = "\uE8B0", HideIcon = "\uE70D", ExpandIcon = "\uE70E", TrashIcon = "\uE74D";
+    const string LassoIcon = "";     // drawn by DrawLassoIcon
     const string MoonIcon = "\uE708", SunIcon = "\uE706";
 
     readonly ID2D1Factory factory = D2D1.D2D1CreateFactory<ID2D1Factory>();
@@ -73,7 +75,7 @@ public sealed partial class BoardForm : Form
     int colorIndex;
     readonly int[] sizeIndex = [1, 1, 1];
 
-    enum Mode { None, Draw, Erase, Pan, PressText, MoveText, ResizeText, Slide, SelectText }
+    enum Mode { None, Draw, Erase, Pan, PressText, MoveText, ResizeText, Slide, SelectText, Lasso, MovePicked }
     Mode mode;
     MouseButtons modeButton;
     Vector2 cursor;                  // last mouse position, screen DIPs
@@ -189,9 +191,16 @@ public sealed partial class BoardForm : Form
         }).ToArray();
         bannerFont = dwrite.CreateTextFormat("Segoe UI", FontWeight.Normal, Vortice.DirectWrite.FontStyle.Normal, FontStretch.Normal, 14f);
         CreateMenuFonts();
+        CreateLassoResources();
 
         LoadBoard();
-        board.Changed += () => { contentVersion++; saveTimer.Stop(); saveTimer.Start(); };
+        board.Changed += () =>
+        {
+            contentVersion++;
+            picked = null;   // the lasso's picks may be gone or replaced now (undo, erasing...)
+            saveTimer.Stop();
+            saveTimer.Start();
+        };
         saveTimer.Tick += (_, _) => { saveTimer.Stop(); SaveBoard(); };
         caretTimer.Tick += (_, _) => { caretOn = !caretOn; Invalidate(); };
         noticeTimer.Tick += (_, _) => HideNotice();
@@ -314,6 +323,7 @@ public sealed partial class BoardForm : Form
         foreach (var f in sizeLetterFonts) f.Dispose();
         bannerFont.Dispose();
         DisposeMenuFonts();
+        dashStyle?.Dispose();
         dwrite.Dispose();
         factory.Dispose();
     }
@@ -478,6 +488,7 @@ public sealed partial class BoardForm : Form
         }
 
         DrawTextOverlay(r);
+        DrawLasso(r);
         DrawEraserCursor(r);
         DrawToolbar(r);
         DrawMenu(r);
@@ -522,7 +533,7 @@ public sealed partial class BoardForm : Form
         var view = VisibleWorldRect();
         foreach (var item in eraseWorking ?? board.Items)
         {
-            if (item == HiddenInCache || !item.Bounds.IntersectsWith(view)) continue;
+            if (item == HiddenInCache || pickedHidden.Contains(item) || !item.Bounds.IntersectsWith(view)) continue;
             DrawItem(c, item);
         }
         c.Transform = Matrix3x2.Identity;
@@ -530,17 +541,19 @@ public sealed partial class BoardForm : Form
         return true;
     }
 
-    void DrawItem(ID2D1RenderTarget target, Item item)
+    // moved: an extra world-space transform, for items being dragged with the lasso.
+    void DrawItem(ID2D1RenderTarget target, Item item, Matrix3x2? moved = null)
     {
         brush!.Color = Argb(Colors.Display(item.Color));
+        var view = moved is { } m ? m * ViewTransform : ViewTransform;
         switch (item)
         {
             case Stroke { Geometry: { } geometry }:
-                target.Transform = ViewTransform;
+                target.Transform = view;
                 target.FillGeometry(geometry, brush);
                 break;
             case TextItem { Layout: { } layout } t:
-                target.Transform = Matrix3x2.CreateScale(t.Scale) * Matrix3x2.CreateTranslation(t.Position) * ViewTransform;
+                target.Transform = Matrix3x2.CreateScale(t.Scale) * Matrix3x2.CreateTranslation(t.Position) * view;
                 target.DrawTextLayout(Vector2.Zero, layout, brush, DrawTextOptions.NoSnap);
                 break;
         }
@@ -769,15 +782,17 @@ public sealed partial class BoardForm : Form
                 r.FillRoundedRectangle(new RoundedRectangle(rect, 9, 9), brush);
             }
             brush.Color = selected ? Colors.Accent : Colors.Icon;
-            r.DrawText(icon, iconFont, ToDRect(rect), brush);
+            if (t == Tool.Lasso) DrawLassoIcon(r, rect, brush.Color);
+            else r.DrawText(icon, iconFont, ToDRect(rect), brush);
             var chosen = t;
             toolbarButtons.Add((new RectangleF(cx, y, toolW, h), () => SetTool(chosen)));
             cx += toolW;
         }
         Divider(r, ref cx, y, h, gap);
 
-        // Colours (the eraser has none, so they fade while it's selected)
-        float colorAlpha = tool is Tool.Eraser or Tool.Desktop ? 0.3f : 1f;
+        // Colours (the eraser has none, so they fade while it's selected; with the lasso they
+        // recolour what it picked up)
+        float colorAlpha = tool is Tool.Eraser or Tool.Desktop || (tool == Tool.Lasso && picked == null) ? 0.3f : 1f;
         for (int i = 0; i < Palette.Length; i++)
         {
             var center = new Vector2(cx + swatch / 2, cy);
@@ -795,7 +810,7 @@ public sealed partial class BoardForm : Form
         Divider(r, ref cx, y, h, gap);
 
         // Sizes for the current tool
-        int ti = tool == Tool.Desktop ? (int)Tool.Pen : (int)tool;   // Desktop shows the pen's sizes
+        int ti = tool is Tool.Desktop or Tool.Lasso ? (int)Tool.Pen : (int)tool;   // these show the pen's sizes
         for (int i = 0; i < 5; i++)
         {
             var center = new Vector2(cx + sizeSlot / 2, cy);
@@ -1008,6 +1023,7 @@ public sealed partial class BoardForm : Form
     {
         CommitTextEdit();
         CloseMenu();
+        ClearPicked();
         tool = t;
         hoverText = null;
         UpdateCursor();
@@ -1036,7 +1052,12 @@ public sealed partial class BoardForm : Form
     void SetColor(int index)
     {
         colorIndex = index;
-        if (tool is Tool.Eraser or Tool.Desktop) SetTool(Tool.Pen);   // picking a colour means you want to draw
+        if (tool == Tool.Lasso && picked != null)
+        {
+            RecolorPicked(Palette[index]);
+            return;
+        }
+        if (tool is Tool.Eraser or Tool.Desktop or Tool.Lasso) SetTool(Tool.Pen);   // picking a colour means you want to draw
         if (editing != null)
         {
             editing.Color = Palette[index];
@@ -1046,7 +1067,7 @@ public sealed partial class BoardForm : Form
 
     void SetSize(int index)
     {
-        if (tool == Tool.Desktop) SetTool(Tool.Pen);
+        if (tool is Tool.Desktop or Tool.Lasso) SetTool(Tool.Pen);
         sizeIndex[(int)tool] = index;
         if (editing != null)
         {
@@ -1233,6 +1254,7 @@ public sealed partial class BoardForm : Form
                 case Tool.Pen: BeginStroke(); break;
                 case Tool.Eraser: BeginErase(button); break;
                 case Tool.Text: TextMouseDown(); break;
+                case Tool.Lasso: LassoMouseDown(); break;
             }
         }
     }
@@ -1281,6 +1303,12 @@ public sealed partial class BoardForm : Form
                 break;
             case Mode.SelectText:
                 if (editing != null) MoveCaret(textInk.IndexAt(editing, ScreenToWorld(cursor)), extend: true);
+                break;
+            case Mode.Lasso:
+                ExtendLasso();
+                break;
+            case Mode.MovePicked:
+                DragPicked();
                 break;
             default:
                 if (tool == Tool.Eraser) Invalidate();   // the eraser circle follows the mouse
@@ -1344,6 +1372,8 @@ public sealed partial class BoardForm : Form
             case Mode.MoveText: EndMoveText(); break;
             case Mode.ResizeText: EndResize(); break;
             case Mode.Slide: SaveSettings(); break;
+            case Mode.Lasso: FinishLasso(); break;
+            case Mode.MovePicked: FinishPickedDrag(); break;
         }
         mode = Mode.None;
         UpdateCursor();

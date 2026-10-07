@@ -20,8 +20,8 @@ To quit, right-click the paw in the tray → **Exit Pawboard**.
 
 ## How it works
 
-Pick a tool from the toolbar at the bottom: pen, eraser, text, or the arrow to use your desktop
-normally. Scroll to zoom in, middle-drag to move around, right-drag to erase. The ⌄ button
+Pick a tool from the toolbar at the bottom: pen, eraser, text, lasso, or the arrow to use your
+desktop normally. Scroll to zoom in, middle-drag to move around, right-drag to erase. The ⌄ button
 shrinks the toolbar down to just the arrow and the pen. The ☰ menu has save/open, dark mode,
 backgrounds, Lock zoom and Start with Windows.
 
@@ -35,6 +35,7 @@ It saves by itself and uses no CPU when you're not drawing.
 | Middle-drag | Move around (when zoomed in) |
 | Right-drag | Erase (with pen, eraser or text selected) |
 | ↶ ↷ on the toolbar | Undo / redo |
+| Lasso: draw a loop | Pick up ink and text, then drag to move, drag a corner to resize, click a colour to recolour, or the bin to delete |
 
 In a text box:
 
