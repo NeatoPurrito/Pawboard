@@ -16,6 +16,7 @@ public sealed partial class BoardForm
     bool desktopImageDirty = true;               // the layer needs painting (again)
     DesktopImage.Info? desktopImageInfo;
     readonly System.Windows.Forms.Timer desktopImageCheck = new() { Interval = 800 };
+    FileSystemWatcher? themesWatcher;
 
     bool ShowingDesktopImage => showDesktopImage && desktopImageLayer != null;
 
@@ -24,20 +25,54 @@ public sealed partial class BoardForm
         // Settings fires this when the wallpaper changes (also each slideshow step); wait for it
         // to settle, then look whether the picture really changed.
         Microsoft.Win32.SystemEvents.UserPreferenceChanged += OnUserPreferenceChanged;
+        // Not every way of changing the wallpaper sends that, but Windows always writes its own
+        // copy of the new picture into its Themes folder (Settings, "Set as background",
+        // slideshows, Spotlight), so watch for that too. Costs nothing until it changes.
+        var themes = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Microsoft", "Windows", "Themes");
+        try
+        {
+            if (Directory.Exists(themes))
+            {
+                themesWatcher = new FileSystemWatcher(themes, "Transcoded*")
+                {
+                    NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.Size,
+                    IncludeSubdirectories = false,
+                };
+                themesWatcher.Changed += (_, _) => Post(CheckDesktopImageSoon);
+                themesWatcher.Created += (_, _) => Post(CheckDesktopImageSoon);
+                themesWatcher.Renamed += (_, _) => Post(CheckDesktopImageSoon);
+                themesWatcher.EnableRaisingEvents = true;
+            }
+        }
+        catch (Exception ex) when (ex is IOException or ArgumentException or UnauthorizedAccessException)
+        {
+            Log.Write($"can't watch for wallpaper changes: {ex.GetType().Name}");
+        }
         desktopImageCheck.Tick += (_, _) =>
         {
             desktopImageCheck.Stop();
             if (!showDesktopImage) return;
             var fresh = DesktopImage.Read();
-            if (fresh?.Signature == desktopImageInfo?.Signature) return;
+            bool changed = fresh?.Signature != desktopImageInfo?.Signature;
+            Log.Write($"wallpaper check: {(changed ? "changed, repainting" : "unchanged")}");
+            if (!changed) return;
             desktopImageInfo = fresh;
             RepaintDesktopImage();
         };
     }
 
+    void CheckDesktopImageSoon()
+    {
+        if (!showDesktopImage) return;
+        desktopImageCheck.Stop();
+        desktopImageCheck.Start();
+    }
+
     void StopDesktopImageWatch()
     {
         Microsoft.Win32.SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;
+        themesWatcher?.Dispose();
+        themesWatcher = null;
         desktopImageCheck.Dispose();
         desktopImageLayer?.Dispose();
         desktopImageLayer = null;
@@ -45,9 +80,7 @@ public sealed partial class BoardForm
 
     void OnUserPreferenceChanged(object? sender, Microsoft.Win32.UserPreferenceChangedEventArgs e)
     {
-        if (e.Category != Microsoft.Win32.UserPreferenceCategory.Desktop || !showDesktopImage) return;
-        desktopImageCheck.Stop();
-        desktopImageCheck.Start();
+        if (e.Category == Microsoft.Win32.UserPreferenceCategory.Desktop) CheckDesktopImageSoon();
     }
 
     void ToggleDesktopImage()
