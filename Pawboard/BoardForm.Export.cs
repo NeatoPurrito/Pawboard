@@ -6,8 +6,8 @@ using DRect = Vortice.Mathematics.Rect;
 
 namespace Pawboard;
 
-// "Save as picture…": the whole board as it looks at 100% (wallpaper, pattern, ink and text) as
-// a PNG. Drawn at twice the screen's resolution so small writing stays sharp when zoomed into.
+// "Save as picture…": the board as it looks at 100% (wallpaper, pattern, ink and text) as a PNG
+// per screen. Drawn at twice the screen's resolution so small writing stays sharp when zoomed into.
 public sealed partial class BoardForm
 {
     const float PictureSharpness = 2;
@@ -23,12 +23,20 @@ public sealed partial class BoardForm
             DefaultExt = "png",
             FileName = $"Pawboard {DateTime.Now:yyyy-MM-dd}.png",
             InitialDirectory = pictureFolder,
+            // With several screens the files get " - screen N" added; asked about below instead.
+            OverwritePrompt = PictureScreens().Length == 1,
         };
         if (dialog.ShowDialog(DialogOwner) != DialogResult.OK) return;
         pictureFolder = Path.GetDirectoryName(dialog.FileName) ?? pictureFolder;
+        var files = PictureFiles(dialog.FileName);
+        var existing = files.Where(File.Exists).Select(Path.GetFileName).ToList();
+        if (files.Count > 1 && existing.Count > 0 &&
+            MessageBox.Show(DialogOwner, $"Replace these pictures?\n\n{string.Join("\n", existing)}", "Pawboard",
+                MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
+            return;
         try
         {
-            WritePicture(dialog.FileName);
+            WritePictures(files);
         }
         catch (Exception ex)
         {
@@ -37,7 +45,20 @@ public sealed partial class BoardForm
         }
     }
 
-    void WritePicture(string path)
+    // The screens the board covers, left to right (the order the files are numbered in).
+    Rectangle[] PictureScreens() => Screen.AllScreens.Select(s => s.Bounds).OrderBy(b => b.X).ThenBy(b => b.Y).ToArray();
+
+    // One file per screen: the chosen name as it is with a single screen, else " - screen N" added.
+    List<string> PictureFiles(string chosen)
+    {
+        int count = PictureScreens().Length;
+        if (count == 1) return [chosen];
+        var folder = Path.GetDirectoryName(chosen) ?? "";
+        var name = Path.GetFileNameWithoutExtension(chosen);
+        return Enumerable.Range(1, count).Select(i => Path.Combine(folder, $"{name} - screen {i}.png")).ToList();
+    }
+
+    void WritePictures(List<string> files)
     {
         // The board is the screen, so the picture is the screen's size times the sharpness
         // (a little less on huge setups, to stay within what an image can hold).
@@ -81,16 +102,28 @@ public sealed partial class BoardForm
             }
         }
 
-        // Straight from the picture into the file, without a second copy in memory.
-        using var stream = wic.CreateStream(path, FileAccess.Write);
-        using var encoder = wic.CreateEncoder(ContainerFormat.Png, stream);
-        using var frame = encoder.CreateNewFrame(out var options);
-        frame.Initialize(options);
-        frame.SetSize(width, height);
-        var format = Vortice.WIC.PixelFormat.Format32bppBGRA;
-        frame.SetPixelFormat(ref format);
-        frame.WriteSource(bitmap);
-        frame.Commit();
-        encoder.Commit();
+        // Each screen's part, cut out and written straight into its file (no copies in memory).
+        var screens = PictureScreens();
+        for (int i = 0; i < screens.Length && i < files.Count; i++)
+        {
+            var topLeft = PointToClient(screens[i].Location);
+            var part = Rectangle.Intersect(
+                new Rectangle((int)MathF.Round(topLeft.X * k), (int)MathF.Round(topLeft.Y * k),
+                    (int)MathF.Round(screens[i].Width * k), (int)MathF.Round(screens[i].Height * k)),
+                new Rectangle(0, 0, (int)width, (int)height));
+            if (part.Width <= 0 || part.Height <= 0) continue;
+            using var clipper = wic.CreateBitmapClipper();
+            clipper.Initialize(bitmap, new Vortice.Mathematics.RectI(part.X, part.Y, part.Width, part.Height));
+            using var stream = wic.CreateStream(files[i], FileAccess.Write);
+            using var encoder = wic.CreateEncoder(ContainerFormat.Png, stream);
+            using var frame = encoder.CreateNewFrame(out var options);
+            frame.Initialize(options);
+            frame.SetSize((uint)part.Width, (uint)part.Height);
+            var format = Vortice.WIC.PixelFormat.Format32bppBGRA;
+            frame.SetPixelFormat(ref format);
+            frame.WriteSource(clipper);
+            frame.Commit();
+            encoder.Commit();
+        }
     }
 }
