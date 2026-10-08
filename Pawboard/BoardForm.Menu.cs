@@ -132,7 +132,7 @@ public sealed partial class BoardForm
         menuButtons.Clear();
         if (!menuOpen) return;
         const float pad = 6, row = 36, caption = 24, chipH = 58, sliderH = 32, divider = 9;
-        float h = pad + row * 3 + divider + caption + chipH + sliderH + divider + row * 3 + pad;
+        float h = pad + row * 4 + divider + caption + chipH + sliderH + divider + row * 3 + pad;
         float x = toolbarRect.Right - MenuWidth, y = toolbarRect.Top - 8 - h;
         menuRect = new RectangleF(x, y, MenuWidth, h);
 
@@ -148,6 +148,7 @@ public sealed partial class BoardForm
         MenuRow(r, x, ref cy, row, "\uE8E5", "Open a board…", () => FromMenu(OpenBoard));
         // Locked, you're always at the start already.
         MenuRow(r, x, ref cy, row, "\uE80F", "Back to start", zoomLocked ? null : () => { CloseMenu(); GoHome(); });
+        MenuRow(r, x, ref cy, row, "\uE74D", "Clear all", board.Items.Count == 0 ? null : () => { CloseMenu(); ClearAll(); });
         MenuDivider(r, x, ref cy, divider);
 
         brush.Color = Colors.Faint(0.5f);
@@ -259,7 +260,7 @@ public sealed partial class BoardForm
     void ToggleMenu()
     {
         menuOpen = !menuOpen;
-        if (menuOpen) autostartOn = Autostart.IsOn();
+        if (menuOpen) { autostartOn = Autostart.IsOn(); ClosePicker(); }
         Invalidate();
     }
 

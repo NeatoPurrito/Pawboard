@@ -71,9 +71,12 @@ public sealed partial class BoardForm : Form
 
     Tool tool = Tool.Pen;
     int colorIndex;
+    uint customColor;
+    bool useCustomColor;
+    uint ActiveColor => useCustomColor ? customColor : Palette[colorIndex];
     readonly int[] sizeIndex = [1, 1, 1];
 
-    enum Mode { None, Draw, Erase, Pan, PressText, MoveText, ResizeText, Slide, SelectText }
+    enum Mode { None, Draw, Erase, Pan, PressText, MoveText, ResizeText, Slide, SelectText, PickSquare, PickHue }
     Mode mode;
     MouseButtons modeButton;
     Vector2 cursor;                  // last mouse position, screen DIPs
@@ -467,6 +470,7 @@ public sealed partial class BoardForm : Form
         DrawEraserCursor(r);
         DrawToolbar(r);
         DrawMenu(r);
+        DrawPicker(r);
         if (notice != null) DrawBanner(r, notice);
 
         if (r.EndDraw().Failure) DiscardDevice();   // device lost: rebuild everything on the next frame
@@ -729,7 +733,7 @@ public sealed partial class BoardForm : Form
         }
         const float h = 48, toolW = 40, swatch = 28, sizeSlot = 30, pad = 8, gap = 18;
         var tools = ToolButtons;
-        float w = pad + tools.Length * toolW + gap + Palette.Length * swatch + gap + 5 * sizeSlot + gap + 2 * toolW + gap + 2 * toolW + pad;
+        float w = pad + tools.Length * toolW + gap + (Palette.Length + 1) * swatch + gap + 5 * sizeSlot + gap + 2 * toolW + gap + 2 * toolW + pad;
         float x = MathF.Round(area.Left + (area.Width - w) / 2), y = area.Bottom - h - 14;
         toolbarRect = new RectangleF(x, y, w, h);
 
@@ -766,7 +770,7 @@ public sealed partial class BoardForm : Form
         for (int i = 0; i < Palette.Length; i++)
         {
             var center = new Vector2(cx + swatch / 2, cy);
-            if (i == colorIndex && tool is Tool.Pen or Tool.Text)
+            if (i == colorIndex && !useCustomColor && tool is Tool.Pen or Tool.Text)
             {
                 brush.Color = WithAlpha(Argb(Colors.Display(Palette[i])), 0.35f);
                 r.DrawEllipse(new Ellipse(center, 12, 12), brush, 2f);
@@ -775,6 +779,15 @@ public sealed partial class BoardForm : Form
             r.FillEllipse(new Ellipse(center, 8, 8), brush);
             int index = i;
             toolbarButtons.Add((new RectangleF(cx, y, swatch, h), () => SetColor(index)));
+            cx += swatch;
+        }
+
+        // Custom colour: opens the picker
+        {
+            var center = new Vector2(cx + swatch / 2, cy);
+            pickerSwatchRect = new RectangleF(cx, y, swatch, h);
+            DrawCustomSwatch(r, center, colorAlpha, selected: useCustomColor && tool is Tool.Pen or Tool.Text);
+            toolbarButtons.Add((pickerSwatchRect, TogglePicker));
             cx += swatch;
         }
         Divider(r, ref cx, y, h, gap);
@@ -789,7 +802,7 @@ public sealed partial class BoardForm : Form
                 brush.Color = Colors.Faint(0.08f);
                 r.FillEllipse(new Ellipse(center, 13.5f, 13.5f), brush);
             }
-            var ink = Argb(Colors.Display(Palette[colorIndex]));
+            var ink = Argb(Colors.Display(ActiveColor));
             switch ((Tool)ti)
             {
                 case Tool.Pen:
@@ -955,6 +968,15 @@ public sealed partial class BoardForm : Form
         }
     }
 
+    void ClearAll()
+    {
+        CommitTextEdit();
+        board.Commit(new List<Item>());
+        cacheDirty = true;
+        hoverText = null;
+        Invalidate();
+    }
+
     void OpenBoard()
     {
         CommitTextEdit();
@@ -1004,7 +1026,7 @@ public sealed partial class BoardForm : Form
     void HideToolbar()
     {
         CommitTextEdit();
-        CloseMenu();
+        ClosePopups();
         toolbarHidden = true;
         if (!MiniTools.Any(b => b.Item1 == tool)) SetTool(MiniTools[0].Item1);
         SaveSettings();
@@ -1021,12 +1043,9 @@ public sealed partial class BoardForm : Form
     void SetColor(int index)
     {
         colorIndex = index;
-        if (tool is Tool.Eraser or Tool.Desktop) SetTool(Tool.Pen);   // picking a colour means you want to draw
-        if (editing != null)
-        {
-            editing.Color = Palette[index];
-            Invalidate();
-        }
+        useCustomColor = false;
+        if (tool is Tool.Eraser or Tool.Desktop) SetTool(Tool.Pen);
+        if (editing != null) { editing.Color = Palette[index]; Invalidate(); }
     }
 
     void SetSize(int index)
@@ -1198,8 +1217,8 @@ public sealed partial class BoardForm : Form
         cursor = ToDip(location);
         if (mode != Mode.None) return;
 
-        if (button == MouseButtons.Left && MenuClick(cursor)) return;
-        if (button != MouseButtons.Left) CloseMenu();
+        if (button == MouseButtons.Left && (PickerClick(cursor) || MenuClick(cursor))) return;
+        if (button != MouseButtons.Left) ClosePopups();
 
         if (button == MouseButtons.Left && toolbarRect.Contains(cursor.X, cursor.Y))
         {
@@ -1263,6 +1282,10 @@ public sealed partial class BoardForm : Form
                 break;
             case Mode.Slide:
                 SlideTo(cursor.X);
+                break;
+            case Mode.PickSquare:
+            case Mode.PickHue:
+                PickTo(cursor);
                 break;
             case Mode.SelectText:
                 if (editing != null) MoveCaret(textInk.IndexAt(editing, ScreenToWorld(cursor)), extend: true);
@@ -1388,7 +1411,7 @@ public sealed partial class BoardForm : Form
         lastMove = null;
         active = new Stroke
         {
-            Color = Palette[colorIndex],
+            Color = ActiveColor,
             // Pen size is constant on screen, so zoomed out you write finer in world terms.
             Size = ToolSizes[(int)Tool.Pen][sizeIndex[(int)Tool.Pen]] / zoom,
             Smoothing = PenSmoothing / zoom,
@@ -1576,7 +1599,7 @@ public sealed partial class BoardForm : Form
 
         var t = new TextItem
         {
-            Color = Palette[colorIndex],
+            Color = ActiveColor,
             FontSize = ToolSizes[(int)Tool.Text][sizeIndex[(int)Tool.Text]] / zoom,
             Position = world,
         };
@@ -1892,7 +1915,7 @@ public sealed partial class BoardForm : Form
         if (tool != Tool.Text) SetTool(Tool.Text);
         var t = new TextItem
         {
-            Color = Palette[colorIndex],
+            Color = ActiveColor,
             FontSize = ToolSizes[(int)Tool.Text][sizeIndex[(int)Tool.Text]] / zoom,
             Position = ScreenToWorld(cursor),
         };
@@ -2023,6 +2046,7 @@ public sealed partial class BoardForm : Form
                 return true;
             case Keys.Z when control: UndoAction(); return true;
             case Keys.V when control: PasteAtCursor(); return true;
+            case Keys.Escape when PopupOpen: ClosePopups(); return true;
             default: return false;
         }
     }
