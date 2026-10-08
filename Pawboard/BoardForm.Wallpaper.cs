@@ -366,12 +366,12 @@ public sealed partial class BoardForm
                 {
                     // Clicked into an app: an open text box or menu is done.
                     if (editing != null) BeginInvoke(CommitTextEdit);
-                    if (menuOpen) BeginInvoke(CloseMenu);
+                    if (PopupOpen) BeginInvoke(ClosePopups);
                     return false;
                 }
                 var dip = new System.Numerics.Vector2(client.X, client.Y) / hookDpiScale;
                 // While the menu is open, any click on the desktop is the board's (it closes the menu).
-                bool onToolbar = toolbarRect.Contains(dip.X, dip.Y) || menuOpen;
+                bool onToolbar = toolbarRect.Contains(dip.X, dip.Y) || PopupOpen;
                 if (!onToolbar && (tool == Tool.Desktop || OverIcon(screen)))
                 {
                     if (editing != null) BeginInvoke(CommitTextEdit);
@@ -394,7 +394,7 @@ public sealed partial class BoardForm
             case InputHooks.WM_RBUTTONDOWN:
             {
                 if (editing != null) BeginInvoke(CommitTextEdit);
-                if (menuOpen) BeginInvoke(CloseMenu);
+                if (PopupOpen) BeginInvoke(ClosePopups);
                 // In the Desktop tool, on icons and on apps, right-click is Windows' as always.
                 if (tool == Tool.Desktop || !Desktop.IsDesktopAt(screen) || OverIcon(screen)) return false;
                 var dip = new System.Numerics.Vector2(client.X, client.Y) / hookDpiScale;
