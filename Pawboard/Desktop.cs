@@ -49,6 +49,14 @@ static class Desktop
         return true;
     }
 
+    // True if the board window covers exactly all monitors (as AttachBehindIcons leaves it).
+    public static bool CoversVirtualScreen(nint hwnd)
+    {
+        if (!GetWindowRect(hwnd, out var r)) return false;
+        var screen = SystemInformation.VirtualScreen;
+        return r.Left == screen.Left && r.Top == screen.Top && r.Right == screen.Right && r.Bottom == screen.Bottom;
+    }
+
     // A screen point in a window's client pixels. Plain Win32, so it's safe from any thread.
     public static Point ToClient(nint hwnd, Point screen)
     {
