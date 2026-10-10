@@ -33,7 +33,7 @@ It saves by itself and uses no CPU when you're not drawing.
 |---|---|
 | Scroll wheel | Zoom in / out |
 | Middle-drag | Move around (when zoomed in) |
-| Right-drag | Erase (with pen, eraser or text selected) |
+| Right-drag | Erase. With Smart erasing on (☰), the pen erases only pen ink and the highlighter only highlights |
 | ↶ ↷ on the toolbar | Undo / redo |
 | Lasso: draw a loop | Pick up ink and text, then drag to move, drag a corner to resize, click a colour to recolour, or the bin to delete |
 

@@ -285,6 +285,7 @@ public static class BoardStore
         public bool ToolbarHidden { get; set; }
         public bool ZoomLocked { get; set; }
         public bool ShowWallpaper { get; set; }
+        public bool SmartErase { get; set; } = true;
         public float WallpaperVeil { get; set; } = 0.6f;     // 0 the picture as is, 1 plain board colour
     }
 

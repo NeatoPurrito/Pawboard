@@ -175,6 +175,7 @@ public sealed partial class BoardForm : Form
         toolbarHidden = settings.ToolbarHidden;
         zoomLocked = settings.ZoomLocked;
         showDesktopImage = settings.ShowWallpaper;
+        smartErase = settings.SmartErase;
         imageVeil = float.IsFinite(settings.WallpaperVeil) ? Math.Clamp(settings.WallpaperVeil, 0, 1) : 0.6f;
         ApplyWindowTheme();
         SetPointer(Cursors.Cross);
@@ -1503,6 +1504,11 @@ public sealed partial class BoardForm : Form
 
     // ---------- eraser ----------
 
+    // Smart erasing (in the menu): right-drag with the pen erases only pen ink, with the
+    // highlighter only highlights. The eraser tool, and right-drag with any other tool, erase both.
+    bool smartErase = true;
+    bool? eraseHighlights;           // this drag: true only highlights, false only pen ink, null both
+
     void BeginErase(MouseButtons button)
     {
         CommitTextEdit();
@@ -1510,6 +1516,8 @@ public sealed partial class BoardForm : Form
         coasting = false;
         mode = Mode.Erase;
         modeButton = button;
+        eraseHighlights = !smartErase || button != MouseButtons.Right ? null
+            : tool switch { Tool.Pen => false, Tool.Highlighter => true, _ => null };
         eraseWorking = board.Items.ToList();
         eraseCopies.Clear();
         eraseChanged = false;
@@ -1535,9 +1543,9 @@ public sealed partial class BoardForm : Form
         var items = eraseWorking!;
         for (int i = items.Count - 1; i >= 0; i--)
         {
+            if (eraseHighlights is { } onlyHighlights && items[i] is Stroke { Highlight: var h } && h != onlyHighlights) continue;
             switch (items[i])
             {
-
                 case Stroke s when eraseCopies.Contains(s):
                     if (Ink.Erase(factory, s, a, b, radius)) eraseChanged = cacheDirty = true;
                     break;

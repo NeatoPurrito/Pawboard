@@ -57,6 +57,7 @@ public sealed partial class BoardForm
                 ToolbarHidden = toolbarHidden,
                 ZoomLocked = zoomLocked,
                 ShowWallpaper = showDesktopImage,
+                SmartErase = smartErase,
                 WallpaperVeil = imageVeil,
             });
         }
@@ -147,7 +148,7 @@ public sealed partial class BoardForm
         menuButtons.Clear();
         if (!menuOpen) return;
         const float pad = 6, row = 36, caption = 24, chipH = 58, sliderH = 32, divider = 9;
-        float h = pad + row * 4 + divider + caption + chipH + sliderH + row + (showDesktopImage ? sliderH : 0) + divider + row * 3 + pad;
+        float h = pad + row * 4 + divider + caption + chipH + sliderH + row + (showDesktopImage ? sliderH : 0) + divider + row * 4 + pad;
         float x = toolbarRect.Right - MenuWidth, y = toolbarRect.Top - 8 - h;
         menuRect = new RectangleF(x, y, MenuWidth, h);
 
@@ -205,6 +206,7 @@ public sealed partial class BoardForm
         // Switches.
         SwitchRow(r, x, ref cy, row, dark ? SunIcon : MoonIcon, "Dark mode", dark, ToggleDark);
         SwitchRow(r, x, ref cy, row, "\uE72E", "Lock zoom", zoomLocked, ToggleZoomLock);
+        SwitchRow(r, x, ref cy, row, "\uE75C", "Smart erasing", smartErase, ToggleSmartErase);
         SwitchRow(r, x, ref cy, row, "\uE7E8", "Start with Windows", autostartOn, ToggleAutostart);
     }
 
@@ -263,6 +265,13 @@ public sealed partial class BoardForm
         r.FillEllipse(new Ellipse(new Vector2(knobX, track.Y + 10), 7, 7), brush);
         menuButtons.Add((rect, toggle));
         cy += row;
+    }
+
+    void ToggleSmartErase()
+    {
+        smartErase = !smartErase;
+        SaveSettings();
+        Invalidate();
     }
 
     // Whether the Startup shortcut exists; read when the menu opens, not on every frame.
