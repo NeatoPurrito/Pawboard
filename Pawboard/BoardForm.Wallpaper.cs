@@ -57,8 +57,8 @@ public sealed partial class BoardForm
     IWin32Window? DialogOwner => wallpaper ? null : this;
 
     (Tool, string)[] ToolButtons => wallpaper
-        ? [(Tool.Desktop, DesktopIcon), (Tool.Pen, PenIcon), (Tool.Eraser, EraserIcon), (Tool.Text, TextIcon), (Tool.Lasso, LassoIcon)]
-        : [(Tool.Pen, PenIcon), (Tool.Eraser, EraserIcon), (Tool.Text, TextIcon), (Tool.Lasso, LassoIcon)];
+        ? [(Tool.Desktop, DesktopIcon), (Tool.Pen, PenIcon), (Tool.Highlighter, HighlighterIcon), (Tool.Eraser, EraserIcon), (Tool.Text, TextIcon), (Tool.Lasso, LassoIcon)]
+        : [(Tool.Pen, PenIcon), (Tool.Highlighter, HighlighterIcon), (Tool.Eraser, EraserIcon), (Tool.Text, TextIcon), (Tool.Lasso, LassoIcon)];
 
     // Where the toolbar sits, in client DIPs: the window, or above the taskbar on the main monitor.
     RectangleF ToolbarArea

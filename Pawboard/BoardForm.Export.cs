@@ -92,7 +92,7 @@ public sealed partial class BoardForm
                     target.FillRectangle(new DRect(0, 0, size.X, size.Y), brush);
                 }
                 DrawBackdrop(target);
-                foreach (var item in board.Items) DrawItem(target, item);
+                foreach (var item in PaintOrder(board.Items)) DrawItem(target, item);
                 target.EndDraw().CheckError();
             }
             finally

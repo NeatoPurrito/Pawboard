@@ -17,6 +17,7 @@ public sealed class Stroke : Item
 {
     public float Size;              // world units
     public float Smoothing;         // world units: how far along the line points blend with neighbours (0 = none)
+    public bool Highlight;          // a highlighter stroke: even width, see-through, drawn under other ink
     public List<Vector2> Points = new();   // input points in world space
     // Eraser paths that went over this stroke; their shape is cut out of the line.
     public List<EraseRun> Erasures = new();
@@ -29,7 +30,7 @@ public sealed class Stroke : Item
     // A copy to erase into. Points never change after drawing, so they're shared.
     public Stroke CopyForErasing() => new()
     {
-        Color = Color, Size = Size, Smoothing = Smoothing, Points = Points,
+        Color = Color, Size = Size, Smoothing = Smoothing, Highlight = Highlight, Points = Points,
         Erasures = new List<EraseRun>(Erasures), InheritedRuns = Erasures.Count, Bounds = Bounds,
     };
 

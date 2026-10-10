@@ -212,7 +212,10 @@ public sealed partial class BoardForm
         pickedScale = 1;
     }
 
-    void RecolorPicked(uint color) => ReplacePicked(item => Transformed(item, Matrix3x2.Identity, 1, color));
+    // The colour at this spot on the toolbar: highlights take the highlighter's colour there,
+    // so they stay highlighter colours.
+    void RecolorPicked(int index) => ReplacePicked(item =>
+        Transformed(item, Matrix3x2.Identity, 1, item is Stroke { Highlight: true } ? HighlightPalette[index] : Palette[index]));
 
     // Swaps every picked item for what `make` returns (null removes it) as one undo step, and
     // keeps the new versions picked.
@@ -244,6 +247,7 @@ public sealed partial class BoardForm
                     Color = color ?? s.Color,
                     Size = s.Size * scale,
                     Smoothing = s.Smoothing * scale,
+                    Highlight = s.Highlight,
                     Points = s.Points.Select(p => Vector2.Transform(p, m)).ToList(),
                     // The eraser marks go along, so the same parts stay erased.
                     Erasures = s.Erasures.Select(r => new EraseRun

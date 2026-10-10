@@ -15,6 +15,7 @@ public static class BoardStore
         public uint Color { get; set; }
         public float Size { get; set; }
         public float Smoothing { get; set; }
+        public bool? Highlight { get; set; }   // only written when true
         public float[]? Points { get; set; }
         public string? Text { get; set; }
         public float X { get; set; }
@@ -310,6 +311,7 @@ public static class BoardStore
             Color = s.Color,
             Size = s.Size,
             Smoothing = s.Smoothing,
+            Highlight = s.Highlight ? true : null,
             Points = Flatten(s.Points),
             Erasures = s.Erasures.Count == 0 ? null
                 : s.Erasures.Select(r => (SavedRun?)new SavedRun { Radius = r.Radius, Points = Flatten(r.Points) }).ToList(),
@@ -345,6 +347,7 @@ public static class BoardStore
             Size = s.Size,
             // Smoothing only ever needs to be a fraction of the line width.
             Smoothing = float.IsFinite(s.Smoothing) && s.Smoothing >= 0 ? MathF.Min(s.Smoothing, s.Size * 2) : 0,
+            Highlight = s.Highlight == true,
             Points = Unflatten(s.Points!),
         };
         foreach (var run in s.Erasures ?? [])

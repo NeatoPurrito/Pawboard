@@ -18,12 +18,14 @@ namespace Pawboard;
 public sealed partial class BoardForm : Form
 {
     // Desktop: the board steps aside so icons and the desktop work as usual (wallpaper mode only).
-    // Pen, Eraser and Text come first: they index ToolSizes.
-    enum Tool { Pen, Eraser, Text, Desktop, Lasso }
+    // Pen, Eraser, Text and Highlighter come first: they index ToolSizes.
+    enum Tool { Pen, Eraser, Text, Highlighter, Desktop, Lasso }
 
     static readonly uint[] Palette = [0xFF1E1E1E, 0xFF1971C2, 0xFFE03131, 0xFF2F9E44, 0xFFF08C00];
-    // Per tool, five sizes in screen DIPs: pen width, eraser radius, text height.
-    static readonly float[][] ToolSizes = [[3, 5, 8, 13, 20], [6, 10, 16, 26, 40], [16, 22, 30, 40, 56]];
+    // Yellow, green, pink, blue, orange: a black highlighter would be no use.
+    static readonly uint[] HighlightPalette = [0xFFFFD400, 0xFF40DC6E, 0xFFFF5C8D, 0xFF4DABF7, 0xFFFF922B];
+    // Per tool, five sizes in screen DIPs: pen width, eraser radius, text height, highlighter width.
+    static readonly float[][] ToolSizes = [[3, 5, 8, 13, 20], [6, 10, 16, 26, 40], [16, 22, 30, 40, 56], [10, 16, 24, 34, 48]];
 
     const float DotSpacing = 24;     // world units at zoom 1
     // Screen DIPs: mouse wiggles shorter than about this get ironed out of the line. Measured on
@@ -35,6 +37,7 @@ public sealed partial class BoardForm : Form
     const string PenIcon = "\uE70F", EraserIcon = "\uE75C", TextIcon = "\uE8D2", UndoIcon = "\uE7A7", RedoIcon = "\uE7A6";
     const string DesktopIcon = "\uE8B0", HideIcon = "\uE70D", ExpandIcon = "\uE70E", TrashIcon = "\uE74D";
     const string LassoIcon = "";     // drawn by DrawLassoIcon
+    const string HighlighterIcon = "\uED64";
     const string MoonIcon = "\uE708", SunIcon = "\uE706";
 
     readonly ID2D1Factory factory = D2D1.D2D1CreateFactory<ID2D1Factory>();
@@ -73,7 +76,8 @@ public sealed partial class BoardForm : Form
 
     Tool tool = Tool.Pen;
     int colorIndex;
-    readonly int[] sizeIndex = [1, 1, 1];
+    int highlightColorIndex;         // the highlighter keeps its own colour
+    readonly int[] sizeIndex = [1, 1, 1, 1];
 
     enum Mode { None, Draw, Erase, Pan, PressText, MoveText, ResizeText, Slide, SelectText, Lasso, MovePicked }
     Mode mode;
@@ -482,7 +486,7 @@ public sealed partial class BoardForm : Form
         if (active != null && activeGeometry != null)
         {
             r.Transform = ViewTransform;
-            brush!.Color = Argb(Colors.Display(active.Color));
+            brush!.Color = InkColor(active);
             r.FillGeometry(activeGeometry, brush);
             r.Transform = Matrix3x2.Identity;
         }
@@ -531,7 +535,7 @@ public sealed partial class BoardForm : Form
         DrawBackdrop(c);
 
         var view = VisibleWorldRect();
-        foreach (var item in eraseWorking ?? board.Items)
+        foreach (var item in PaintOrder(eraseWorking ?? board.Items))
         {
             if (item == HiddenInCache || pickedHidden.Contains(item) || !item.Bounds.IntersectsWith(view)) continue;
             DrawItem(c, item);
@@ -541,10 +545,20 @@ public sealed partial class BoardForm : Form
         return true;
     }
 
+    // Highlights first, so they lie under the other ink and text whenever they were drawn.
+    static IEnumerable<Item> PaintOrder(List<Item> items) =>
+        items.Where(i => i is Stroke { Highlight: true }).Concat(items.Where(i => i is not Stroke { Highlight: true }));
+
+    Color4 InkColor(Item item)
+    {
+        var color = Argb(Colors.Display(item.Color));
+        return item is Stroke { Highlight: true } ? WithAlpha(color, Colors.HighlightAlpha) : color;
+    }
+
     // moved: an extra world-space transform, for items being dragged with the lasso.
     void DrawItem(ID2D1RenderTarget target, Item item, Matrix3x2? moved = null)
     {
-        brush!.Color = Argb(Colors.Display(item.Color));
+        brush!.Color = InkColor(item);
         var view = moved is { } m ? m * ViewTransform : ViewTransform;
         switch (item)
         {
@@ -563,7 +577,8 @@ public sealed partial class BoardForm : Form
     // A new stroke only needs painting on top of the cache, not a full rebuild.
     void AddToCache(Item item)
     {
-        if (cache == null || cacheDirty) { cacheDirty = true; return; }
+        // A highlight goes under the ink already there, so that needs a full repaint.
+        if (cache == null || cacheDirty || item is Stroke { Highlight: true }) { cacheDirty = true; return; }
         cache.BeginDraw();
         DrawItem(cache, item);
         if (cache.EndDraw().Failure) DiscardDevice();
@@ -793,15 +808,19 @@ public sealed partial class BoardForm : Form
         // Colours (the eraser has none, so they fade while it's selected; with the lasso they
         // recolour what it picked up)
         float colorAlpha = tool is Tool.Eraser or Tool.Desktop || (tool == Tool.Lasso && picked == null) ? 0.3f : 1f;
-        for (int i = 0; i < Palette.Length; i++)
+        // The highlighter shows its own colours.
+        bool highlighter = tool == Tool.Highlighter;
+        var palette = highlighter ? HighlightPalette : Palette;
+        int chosenColor = highlighter ? highlightColorIndex : colorIndex;
+        for (int i = 0; i < palette.Length; i++)
         {
             var center = new Vector2(cx + swatch / 2, cy);
-            if (i == colorIndex && tool is Tool.Pen or Tool.Text)
+            if (i == chosenColor && tool is Tool.Pen or Tool.Text or Tool.Highlighter)
             {
-                brush.Color = WithAlpha(Argb(Colors.Display(Palette[i])), 0.35f);
+                brush.Color = WithAlpha(Argb(Colors.Display(palette[i])), 0.35f);
                 r.DrawEllipse(new Ellipse(center, 12, 12), brush, 2f);
             }
-            brush.Color = WithAlpha(Argb(Colors.Display(Palette[i])), colorAlpha);
+            brush.Color = WithAlpha(Argb(Colors.Display(palette[i])), colorAlpha);
             r.FillEllipse(new Ellipse(center, 8, 8), brush);
             int index = i;
             toolbarButtons.Add((new RectangleF(cx, y, swatch, h), () => SetColor(index)));
@@ -835,6 +854,12 @@ public sealed partial class BoardForm : Form
                 case Tool.Text:
                     brush.Color = ink;
                     r.DrawText("a", sizeLetterFonts[i], new DRect(center.X - 14, center.Y - 15, 28, 28), brush);
+                    break;
+                case Tool.Highlighter:
+                    // A short see-through band as tall as the highlighter is wide (scaled down).
+                    float band = MathF.Min(18, 3 + ToolSizes[ti][i] * 0.32f);
+                    brush.Color = WithAlpha(Argb(Colors.Display(HighlightPalette[highlightColorIndex])), MathF.Min(1, Colors.HighlightAlpha * 1.6f));
+                    r.FillRoundedRectangle(new RoundedRectangle(new RectangleF(center.X - 9, center.Y - band / 2, 18, band), band / 2, band / 2), brush);
                     break;
             }
             int index = i;
@@ -1051,10 +1076,16 @@ public sealed partial class BoardForm : Form
 
     void SetColor(int index)
     {
+        if (tool == Tool.Highlighter)
+        {
+            highlightColorIndex = index;
+            Invalidate();
+            return;
+        }
         colorIndex = index;
         if (tool == Tool.Lasso && picked != null)
         {
-            RecolorPicked(Palette[index]);
+            RecolorPicked(index);
             return;
         }
         if (tool is Tool.Eraser or Tool.Desktop or Tool.Lasso) SetTool(Tool.Pen);   // picking a colour means you want to draw
@@ -1251,7 +1282,7 @@ public sealed partial class BoardForm : Form
         {
             switch (tool)
             {
-                case Tool.Pen: BeginStroke(); break;
+                case Tool.Pen or Tool.Highlighter: BeginStroke(); break;
                 case Tool.Eraser: BeginErase(button); break;
                 case Tool.Text: TextMouseDown(); break;
                 case Tool.Lasso: LassoMouseDown(); break;
@@ -1431,12 +1462,17 @@ public sealed partial class BoardForm : Form
         mode = Mode.Draw;
         modeButton = MouseButtons.Left;
         lastMove = null;
+        // The highlighter is a pen with its own colours and sizes, an even width, and twice the
+        // smoothing: highlights should come out calm, not shaky.
+        bool highlight = tool == Tool.Highlighter;
+        var kind = highlight ? Tool.Highlighter : Tool.Pen;
         active = new Stroke
         {
-            Color = Palette[colorIndex],
+            Color = highlight ? HighlightPalette[highlightColorIndex] : Palette[colorIndex],
             // Pen size is constant on screen, so zoomed out you write finer in world terms.
-            Size = ToolSizes[(int)Tool.Pen][sizeIndex[(int)Tool.Pen]] / zoom,
-            Smoothing = PenSmoothing / zoom,
+            Size = ToolSizes[(int)kind][sizeIndex[(int)kind]] / zoom,
+            Smoothing = (highlight ? 2 : 1) * PenSmoothing / zoom,
+            Highlight = highlight,
         };
         active.Points.Add(ScreenToWorld(cursor));
         activeDirty = true;

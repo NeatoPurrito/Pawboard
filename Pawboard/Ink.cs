@@ -6,15 +6,16 @@ namespace Pawboard;
 // Stroke feel settings and turning strokes into Direct2D geometry.
 public static class Ink
 {
-    // Tuned for a mouse: pressure is faked from speed (fast = thinner), like a marker.
-    public static FreehandOptions Options(float size, bool last) => new()
+    // Tuned for a mouse: pressure is faked from speed (fast = thinner), like a marker. A highlighter
+    // keeps one even width instead, like a real one.
+    public static FreehandOptions Options(float size, bool last, bool highlight = false) => new()
     {
         Size = size,
         // Higher looks livelier but makes slow turns (tops of l, h, k) pool into blobs.
-        Thinning = 0.32f,
+        Thinning = highlight ? 0 : 0.32f,
         Smoothing = 0.5f,
         Streamline = 0.4f,
-        SimulatePressure = true,
+        SimulatePressure = !highlight,
         Last = last,
     };
 
@@ -96,7 +97,7 @@ public static class Ink
             }
             return dot;
         }
-        return Freehand.GetStroke(SmoothPath(s.Points, s.Smoothing), Options(s.Size, last));
+        return Freehand.GetStroke(SmoothPath(s.Points, s.Smoothing), Options(s.Size, last, s.Highlight));
     }
 
     // Geometry operations turn curves into short lines; this keeps those invisible even at max zoom.
@@ -189,7 +190,7 @@ public static class Ink
         void AddPiece(int from, int to)
         {
             if (to - from < 2) return;   // a lone point would draw a dot that was never there
-            var piece = new Stroke { Color = s.Color, Size = s.Size, Smoothing = s.Smoothing, Points = pts.GetRange(from, to - from) };
+            var piece = new Stroke { Color = s.Color, Size = s.Size, Smoothing = s.Smoothing, Highlight = s.Highlight, Points = pts.GetRange(from, to - from) };
             var bounds = BoundsOf(piece.Points, s.Size);
             foreach (var run in s.Erasures)
                 if (RectangleF.Inflate(BoundsOf(run.Points, 0), run.Radius, run.Radius).IntersectsWith(bounds))

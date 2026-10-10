@@ -194,7 +194,7 @@ public sealed partial class BoardForm
         cy += chipH;
         DrawSlider(r, new RectangleF(x + pad, cy, MenuWidth - pad * 2, sliderH), Slider.Pattern, patternStrength, backdrop != Backdrop.Plain);
         cy += sliderH;
-        SwitchRow(r, x, ref cy, row, "", "Show my wallpaper", showDesktopImage, ToggleDesktopImage);
+        SwitchRow(r, x, ref cy, row, "\uE91B", "Show my wallpaper", showDesktopImage, ToggleDesktopImage);
         if (showDesktopImage)
         {
             DrawSlider(r, new RectangleF(x + pad, cy, MenuWidth - pad * 2, sliderH), Slider.Veil, imageVeil, ShowingDesktopImage);
@@ -204,7 +204,7 @@ public sealed partial class BoardForm
 
         // Switches.
         SwitchRow(r, x, ref cy, row, dark ? SunIcon : MoonIcon, "Dark mode", dark, ToggleDark);
-        SwitchRow(r, x, ref cy, row, "", "Lock zoom", zoomLocked, ToggleZoomLock);
+        SwitchRow(r, x, ref cy, row, "\uE72E", "Lock zoom", zoomLocked, ToggleZoomLock);
         SwitchRow(r, x, ref cy, row, "\uE7E8", "Start with Windows", autostartOn, ToggleAutostart);
     }
 
