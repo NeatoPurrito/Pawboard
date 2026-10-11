@@ -402,14 +402,16 @@ public sealed partial class BoardForm
             {
                 if (!Desktop.IsDesktopAt(screen))
                 {
-                    // Clicked into an app: an open text box or menu is done.
+                    // Clicked into an app: an open text box, menu or tool panel is done.
                     if (editing != null) BeginInvoke(CommitTextEdit);
                     if (menuOpen) BeginInvoke(CloseMenu);
+                    if (!optionsRect.IsEmpty) BeginInvoke(CloseOptions);
                     return false;
                 }
                 var dip = new System.Numerics.Vector2(client.X, client.Y) / hookDpiScale;
                 // While the menu is open, any click on the desktop is the board's (it closes the menu).
                 bool onToolbar = toolbarRect.Contains(dip.X, dip.Y) || menuOpen ||
+                    optionsRect.Contains(dip.X, dip.Y) ||                                 // a tool's colours and sizes
                     (tool == Tool.Lasso && pickedHitRect.Contains(dip.X, dip.Y));   // the lasso's picks and bin button
                 if (!onToolbar && (tool == Tool.Desktop || OverIcon(screen)))
                 {
@@ -434,10 +436,19 @@ public sealed partial class BoardForm
             {
                 if (editing != null) BeginInvoke(CommitTextEdit);
                 if (menuOpen) BeginInvoke(CloseMenu);
-                // In the Desktop tool, on icons and on apps, right-click is Windows' as always.
-                if (tool == Tool.Desktop || !Desktop.IsDesktopAt(screen) || OverIcon(screen)) return false;
+                if (!Desktop.IsDesktopAt(screen)) return false;
                 var dip = new System.Numerics.Vector2(client.X, client.Y) / hookDpiScale;
-                if (toolbarRect.Contains(dip.X, dip.Y)) return false;
+                if (toolbarRect.Contains(dip.X, dip.Y))
+                {
+                    // Right-click on the toolbar: a tool's colours and sizes (with any tool).
+                    hookCapture = MouseButtons.Right;
+                    rightUndecided = false;
+                    BeginInvoke(() => PointerDown(MouseButtons.Right, client));
+                    return true;
+                }
+                if (!optionsRect.IsEmpty) BeginInvoke(CloseOptions);
+                // In the Desktop tool, on icons and on apps, right-click is Windows' as always.
+                if (tool == Tool.Desktop || OverIcon(screen)) return false;
                 hookCapture = MouseButtons.Right;
                 BeginInvoke(CloseShellMenu);
                 rightUndecided = true;

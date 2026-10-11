@@ -58,6 +58,7 @@ public sealed partial class BoardForm
                 ZoomLocked = zoomLocked,
                 ShowWallpaper = showDesktopImage,
                 SmartErase = smartErase,
+                SimpleToolbar = simpleToolbar,
                 WallpaperVeil = imageVeil,
             });
         }
@@ -148,7 +149,7 @@ public sealed partial class BoardForm
         menuButtons.Clear();
         if (!menuOpen) return;
         const float pad = 6, row = 36, caption = 24, chipH = 58, sliderH = 32, divider = 9;
-        float h = pad + row * 4 + divider + caption + chipH + sliderH + row + (showDesktopImage ? sliderH : 0) + divider + row * 4 + pad;
+        float h = pad + row * 4 + divider + caption + chipH + sliderH + row + (showDesktopImage ? sliderH : 0) + divider + row * 5 + pad;
         float x = toolbarRect.Right - MenuWidth, y = toolbarRect.Top - 8 - h;
         menuRect = new RectangleF(x, y, MenuWidth, h);
 
@@ -207,6 +208,7 @@ public sealed partial class BoardForm
         SwitchRow(r, x, ref cy, row, dark ? SunIcon : MoonIcon, "Dark mode", dark, ToggleDark);
         SwitchRow(r, x, ref cy, row, "\uE72E", "Lock zoom", zoomLocked, ToggleZoomLock);
         SwitchRow(r, x, ref cy, row, "\uE75C", "Smart erasing", smartErase, ToggleSmartErase);
+        SwitchRow(r, x, ref cy, row, "\uECA5", "Simple toolbar", simpleToolbar, ToggleSimpleToolbar);
         SwitchRow(r, x, ref cy, row, "\uE7E8", "Start with Windows", autostartOn, ToggleAutostart);
     }
 
@@ -293,6 +295,7 @@ public sealed partial class BoardForm
 
     void ToggleMenu()
     {
+        CloseOptions();
         menuOpen = !menuOpen;
         if (menuOpen) autostartOn = Autostart.IsOn();
         Invalidate();

@@ -20,10 +20,11 @@ To quit, right-click the paw in the tray → **Exit Pawboard**.
 
 ## How it works
 
-Pick a tool from the toolbar at the bottom: pen, eraser, text, lasso, or the arrow to use your
-desktop normally. Scroll to zoom in, middle-drag to move around, right-drag to erase. The ⌄ button
-shrinks the toolbar down to just the arrow and the pen. The ☰ menu has save/open, dark mode,
-backgrounds, Lock zoom and Start with Windows.
+Pick a tool from the toolbar at the bottom: pen, highlighter, eraser, text, lasso, or the arrow to
+use your desktop normally. Right-click a tool (or click it again) for its colours and sizes. Scroll
+to zoom in, middle-drag to move around, right-drag to erase. The ⌄ button shrinks the toolbar down
+to just the arrow and the pen. The ☰ menu has save/open, save as picture, dark mode, backgrounds
+(including your own wallpaper), Lock zoom and Start with Windows.
 
 It saves by itself and uses no CPU when you're not drawing.
 
@@ -31,6 +32,7 @@ It saves by itself and uses no CPU when you're not drawing.
 
 | | |
 |---|---|
+| Right-click a tool, or click it again | Its colours and sizes |
 | Scroll wheel | Zoom in / out |
 | Middle-drag | Move around (when zoomed in) |
 | Right-drag | Erase. With Smart erasing on (☰), the pen erases only pen ink and the highlighter only highlights |

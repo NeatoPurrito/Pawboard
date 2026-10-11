@@ -75,9 +75,7 @@ public sealed partial class BoardForm : Form
     Theme Colors => dark ? Theme.Dark : Theme.Light;
 
     Tool tool = Tool.Pen;
-    int colorIndex;
-    int highlightColorIndex;         // the highlighter keeps its own colour
-    readonly int[] sizeIndex = [1, 1, 1, 1];
+    readonly int[] sizeIndex = [1, 1, 1, 1];   // per tool, like colorIndex (see BoardForm.Toolbar.cs)
 
     enum Mode { None, Draw, Erase, Pan, PressText, MoveText, ResizeText, Slide, SelectText, Lasso, MovePicked }
     Mode mode;
@@ -176,6 +174,7 @@ public sealed partial class BoardForm : Form
         zoomLocked = settings.ZoomLocked;
         showDesktopImage = settings.ShowWallpaper;
         smartErase = settings.SmartErase;
+        simpleToolbar = settings.SimpleToolbar;
         imageVeil = float.IsFinite(settings.WallpaperVeil) ? Math.Clamp(settings.WallpaperVeil, 0, 1) : 0.6f;
         ApplyWindowTheme();
         SetPointer(Cursors.Cross);
@@ -496,6 +495,7 @@ public sealed partial class BoardForm : Form
         DrawLasso(r);
         DrawEraserCursor(r);
         DrawToolbar(r);
+        DrawOptions(r);
         DrawMenu(r);
         if (notice != null) DrawBanner(r, notice);
 
@@ -762,144 +762,6 @@ public sealed partial class BoardForm : Form
         r.DrawEllipse(new Ellipse(cursor, radius, radius), brush, 1f);
     }
 
-    void DrawToolbar(ID2D1RenderTarget r)
-    {
-        toolbarButtons.Clear();
-        var area = ToolbarArea;
-        if (toolbarHidden)
-        {
-            DrawMiniToolbar(r, area);
-            return;
-        }
-        const float h = 48, toolW = 40, swatch = 28, sizeSlot = 30, pad = 8, gap = 18;
-        var tools = ToolButtons;
-        float w = pad + tools.Length * toolW + gap + Palette.Length * swatch + gap + 5 * sizeSlot + gap + 2 * toolW + gap + 2 * toolW + pad;
-        float x = MathF.Round(area.Left + (area.Width - w) / 2), y = area.Bottom - h - 14;
-        toolbarRect = new RectangleF(x, y, w, h);
-
-        brush!.Color = Colors.PanelShadow;
-        r.FillRoundedRectangle(new RoundedRectangle(new RectangleF(x, y + 2, w, h), 14, 14), brush);
-        brush.Color = Colors.Panel;
-        r.FillRoundedRectangle(new RoundedRectangle(new RectangleF(x, y, w, h), 14, 14), brush);
-        brush.Color = Colors.PanelBorder;
-        r.DrawRoundedRectangle(new RoundedRectangle(new RectangleF(x + 0.5f, y + 0.5f, w - 1, h - 1), 14, 14), brush, 1f);
-
-        float cx = x + pad;
-        float cy = y + h / 2;
-
-        // Tools
-        foreach (var (t, icon) in tools)
-        {
-            var rect = new RectangleF(cx + 3, y + 7, toolW - 6, h - 14);
-            bool selected = tool == t;
-            if (selected)
-            {
-                brush.Color = WithAlpha(Colors.Accent, dark ? 0.16f : 0.13f);
-                r.FillRoundedRectangle(new RoundedRectangle(rect, 9, 9), brush);
-            }
-            brush.Color = selected ? Colors.Accent : Colors.Icon;
-            if (t == Tool.Lasso) DrawLassoIcon(r, rect, brush.Color);
-            else r.DrawText(icon, iconFont, ToDRect(rect), brush);
-            var chosen = t;
-            toolbarButtons.Add((new RectangleF(cx, y, toolW, h), () => SetTool(chosen)));
-            cx += toolW;
-        }
-        Divider(r, ref cx, y, h, gap);
-
-        // Colours (the eraser has none, so they fade while it's selected; with the lasso they
-        // recolour what it picked up)
-        float colorAlpha = tool is Tool.Eraser or Tool.Desktop || (tool == Tool.Lasso && picked == null) ? 0.3f : 1f;
-        // The highlighter shows its own colours.
-        bool highlighter = tool == Tool.Highlighter;
-        var palette = highlighter ? HighlightPalette : Palette;
-        int chosenColor = highlighter ? highlightColorIndex : colorIndex;
-        for (int i = 0; i < palette.Length; i++)
-        {
-            var center = new Vector2(cx + swatch / 2, cy);
-            if (i == chosenColor && tool is Tool.Pen or Tool.Text or Tool.Highlighter)
-            {
-                brush.Color = WithAlpha(Argb(Colors.Display(palette[i])), 0.35f);
-                r.DrawEllipse(new Ellipse(center, 12, 12), brush, 2f);
-            }
-            brush.Color = WithAlpha(Argb(Colors.Display(palette[i])), colorAlpha);
-            r.FillEllipse(new Ellipse(center, 8, 8), brush);
-            int index = i;
-            toolbarButtons.Add((new RectangleF(cx, y, swatch, h), () => SetColor(index)));
-            cx += swatch;
-        }
-        Divider(r, ref cx, y, h, gap);
-
-        // Sizes for the current tool
-        int ti = tool is Tool.Desktop or Tool.Lasso ? (int)Tool.Pen : (int)tool;   // these show the pen's sizes
-        for (int i = 0; i < 5; i++)
-        {
-            var center = new Vector2(cx + sizeSlot / 2, cy);
-            if (i == sizeIndex[ti])
-            {
-                brush.Color = Colors.Faint(0.08f);
-                r.FillEllipse(new Ellipse(center, 13.5f, 13.5f), brush);
-            }
-            var ink = Argb(Colors.Display(Palette[colorIndex]));
-            switch ((Tool)ti)
-            {
-                case Tool.Pen:
-                    float dot = MathF.Min(10, 1.5f + ToolSizes[ti][i] * 0.45f);
-                    brush.Color = ink;
-                    r.FillEllipse(new Ellipse(center, dot, dot), brush);
-                    break;
-                case Tool.Eraser:
-                    float ring = 3 + i * 2.2f;
-                    brush.Color = Colors.Faint(0.55f);
-                    r.DrawEllipse(new Ellipse(center, ring, ring), brush, 1.2f);
-                    break;
-                case Tool.Text:
-                    brush.Color = ink;
-                    r.DrawText("a", sizeLetterFonts[i], new DRect(center.X - 14, center.Y - 15, 28, 28), brush);
-                    break;
-                case Tool.Highlighter:
-                    // A short see-through band as tall as the highlighter is wide (scaled down).
-                    float band = MathF.Min(18, 3 + ToolSizes[ti][i] * 0.32f);
-                    brush.Color = WithAlpha(Argb(Colors.Display(HighlightPalette[highlightColorIndex])), MathF.Min(1, Colors.HighlightAlpha * 1.6f));
-                    r.FillRoundedRectangle(new RoundedRectangle(new RectangleF(center.X - 9, center.Y - band / 2, 18, band), band / 2, band / 2), brush);
-                    break;
-            }
-            int index = i;
-            toolbarButtons.Add((new RectangleF(cx, y, sizeSlot, h), () => SetSize(index)));
-            cx += sizeSlot;
-        }
-        Divider(r, ref cx, y, h, gap);
-
-        // Undo / redo
-        foreach (var (icon, enabled, action) in new (string, bool, Action)[]
-                 { (UndoIcon, board.CanUndo || editing != null, UndoAction), (RedoIcon, board.CanRedo, RedoAction) })
-        {
-            var rect = new RectangleF(cx + 3, y + 7, toolW - 6, h - 14);
-            brush.Color = enabled ? Colors.Icon : WithAlpha(Colors.Icon, Colors.Icon.A * 0.35f);
-            r.DrawText(icon, iconFont, ToDRect(rect), brush);
-            if (enabled) toolbarButtons.Add((new RectangleF(cx, y, toolW, h), action));
-            cx += toolW;
-        }
-        Divider(r, ref cx, y, h, gap);
-
-        // ☰ menu: save / open, background pattern, light / dark
-        var menuIcon = new RectangleF(cx + 3, y + 7, toolW - 6, h - 14);
-        if (menuOpen)
-        {
-            brush.Color = WithAlpha(Colors.Accent, dark ? 0.16f : 0.13f);
-            r.FillRoundedRectangle(new RoundedRectangle(menuIcon, 9, 9), brush);
-        }
-        brush.Color = menuOpen ? Colors.Accent : Colors.Icon;
-        r.DrawText(MenuIcon, iconFont, ToDRect(menuIcon), brush);
-        menuButtonRect = new RectangleF(cx, y, toolW, h);
-        toolbarButtons.Add((menuButtonRect, ToggleMenu));
-        cx += toolW;
-
-        // Hide: the toolbar shrinks to a small tab
-        brush.Color = Colors.Icon;
-        r.DrawText(HideIcon, iconFont, ToDRect(new RectangleF(cx + 3, y + 7, toolW - 6, h - 14)), brush);
-        toolbarButtons.Add((new RectangleF(cx, y, toolW, h), HideToolbar));
-    }
-
     // The hidden toolbar: a mini bar with just the arrow and the pen (so it's always clear which
     // one is on), plus a button that brings the full toolbar back.
     (Tool, string)[] MiniTools => ToolButtons.Where(b => b.Item1 is Tool.Desktop or Tool.Pen).ToArray();
@@ -1049,6 +911,7 @@ public sealed partial class BoardForm : Form
     {
         CommitTextEdit();
         CloseMenu();
+        CloseOptions();
         ClearPicked();
         tool = t;
         hoverText = null;
@@ -1075,33 +938,34 @@ public sealed partial class BoardForm : Form
         Invalidate();
     }
 
-    void SetColor(int index)
+    // A colour for a tool (each tool keeps its own). With the lasso it recolours what's picked up.
+    void SetColor(Tool t, int index)
     {
-        if (tool == Tool.Highlighter)
-        {
-            highlightColorIndex = index;
-            Invalidate();
-            return;
-        }
-        colorIndex = index;
-        if (tool == Tool.Lasso && picked != null)
+        if (t == Tool.Lasso && picked != null)
         {
             RecolorPicked(index);
             return;
         }
-        if (tool is Tool.Eraser or Tool.Desktop or Tool.Lasso) SetTool(Tool.Pen);   // picking a colour means you want to draw
-        if (editing != null)
+        if (!HasColors(t))
         {
-            editing.Color = Palette[index];
-            Invalidate();
+            // Picking a colour with the eraser, arrow or (empty) lasso means you want to draw.
+            t = Tool.Pen;
+            SetTool(t);
         }
+        colorIndex[(int)t] = index;
+        if (t == Tool.Text && editing != null) editing.Color = Palette[index];
+        Invalidate();
     }
 
-    void SetSize(int index)
+    void SetSize(Tool t, int index)
     {
-        if (tool is Tool.Desktop or Tool.Lasso) SetTool(Tool.Pen);
-        sizeIndex[(int)tool] = index;
-        if (editing != null)
+        if (!HasSizes(t))
+        {
+            t = Tool.Pen;
+            SetTool(t);
+        }
+        sizeIndex[(int)t] = index;
+        if (t == Tool.Text && editing != null)
         {
             editing.FontSize = ToolSizes[(int)Tool.Text][index] / zoom;
             textInk.Finish(editing);
@@ -1267,15 +1131,22 @@ public sealed partial class BoardForm : Form
         if (mode != Mode.None) return;
 
         if (button == MouseButtons.Left && MenuClick(cursor)) return;
+        if (button == MouseButtons.Left && OptionsClick(cursor)) return;
         if (button != MouseButtons.Left) CloseMenu();
 
-        if (button == MouseButtons.Left && toolbarRect.Contains(cursor.X, cursor.Y))
+        if (toolbarRect.Contains(cursor.X, cursor.Y))
         {
-            foreach (var (rect, click) in toolbarButtons)
-                if (rect.Contains(cursor.X, cursor.Y)) { click(); break; }
+            if (button == MouseButtons.Left)
+            {
+                foreach (var (rect, click) in toolbarButtons)
+                    if (rect.Contains(cursor.X, cursor.Y)) { click(); break; }
+            }
+            // Right-click a tool: its colours and sizes.
+            else if (button == MouseButtons.Right && ToolAt(cursor) is { } t) ToggleOptions(t);
             Invalidate();
             return;
         }
+        if (button != MouseButtons.Left) CloseOptions();
 
         if (button == MouseButtons.Middle) { if (!zoomLocked) BeginPan(button); }
         else if (button == MouseButtons.Right) BeginErase(button);   // right-drag erases with any tool
@@ -1469,7 +1340,7 @@ public sealed partial class BoardForm : Form
         var kind = highlight ? Tool.Highlighter : Tool.Pen;
         active = new Stroke
         {
-            Color = highlight ? HighlightPalette[highlightColorIndex] : Palette[colorIndex],
+            Color = ColorOf(kind),
             // Pen size is constant on screen, so zoomed out you write finer in world terms.
             Size = ToolSizes[(int)kind][sizeIndex[(int)kind]] / zoom,
             Smoothing = (highlight ? 2 : 1) * PenSmoothing / zoom,
@@ -1665,7 +1536,7 @@ public sealed partial class BoardForm : Form
 
         var t = new TextItem
         {
-            Color = Palette[colorIndex],
+            Color = ColorOf(Tool.Text),
             FontSize = ToolSizes[(int)Tool.Text][sizeIndex[(int)Tool.Text]] / zoom,
             Position = world,
         };
@@ -1981,7 +1852,7 @@ public sealed partial class BoardForm : Form
         if (tool != Tool.Text) SetTool(Tool.Text);
         var t = new TextItem
         {
-            Color = Palette[colorIndex],
+            Color = ColorOf(Tool.Text),
             FontSize = ToolSizes[(int)Tool.Text][sizeIndex[(int)Tool.Text]] / zoom,
             Position = ScreenToWorld(cursor),
         };
