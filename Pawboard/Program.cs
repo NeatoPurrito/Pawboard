@@ -41,6 +41,7 @@ static class Program
             var host = Desktop.FindWallpaperHost();
             var icons = Task.Run(Desktop.IconRects).Result;
             var center = Screen.PrimaryScreen!.Bounds.Location + new Size(Screen.PrimaryScreen.Bounds.Width / 2, Screen.PrimaryScreen.Bounds.Height / 2);
+            var picture = DesktopImage.Read();
             File.WriteAllLines(args[1],
             [
                 $"wallpaper host: 0x{host:X}",
@@ -49,6 +50,8 @@ static class Program
                 $"desktop at primary centre: {Desktop.IsDesktopAt(center)}",
                 $"icons: {icons.Count}",
                 .. icons.Take(10).Select(r => $"  {r}"),
+                $"wallpaper: {(picture == null ? "unreadable" : $"{picture.Position}, background 0x{picture.BackgroundColor:X6}")}",
+                .. (picture?.Monitors ?? []).Select(m => $"  {m.Bounds} {m.Path ?? "(plain colour)"}"),
             ]);
             return;
         }

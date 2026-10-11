@@ -16,6 +16,7 @@ public sealed class Theme
     public required Color4 Accent;
     // Subtle overlays (hover boxes, eraser circle, dividers) are this colour at low opacity.
     public required Color4 Tint;
+    public required float HighlightAlpha;   // how see-through highlighter ink is
     public required Dictionary<uint, uint> Ink;
 
     public uint Display(uint stored) => Ink.TryGetValue(stored, out var shown) ? shown : stored;
@@ -33,6 +34,7 @@ public sealed class Theme
         Icon = new(0, 0, 0, 0.62f),
         Accent = new(0.1f, 0.44f, 0.76f, 1),
         Tint = new(0, 0, 0, 1),
+        HighlightAlpha = 0.42f,
         Ink = new(),
     };
 
@@ -48,6 +50,8 @@ public sealed class Theme
         Icon = Rgb(0xB4BCC8),
         Accent = Rgb(0x38C8FF),
         Tint = new(1, 1, 1, 1),
+        // A bit stronger than on paper, so highlights glow on the charcoal instead of looking muddy.
+        HighlightAlpha = 0.38f,
         Ink = new()
         {
             [0xFF1E1E1E] = 0xFFEEF3FA,   // black  -> white
@@ -55,6 +59,12 @@ public sealed class Theme
             [0xFFE03131] = 0xFFFF4F7B,   // red    -> hot pink-red
             [0xFF2F9E44] = 0xFF3DFFA2,   // green  -> mint
             [0xFFF08C00] = 0xFFFFB23F,   // orange -> amber
+            // Highlighter colours, brighter.
+            [0xFFFFD400] = 0xFFFFE14D,   // yellow
+            [0xFF40DC6E] = 0xFF3DFFA2,   // green
+            [0xFFFF5C8D] = 0xFFFF5C9A,   // pink
+            [0xFF4DABF7] = 0xFF38C8FF,   // blue
+            [0xFFFF922B] = 0xFFFFB23F,   // orange
         },
     };
 

@@ -29,6 +29,7 @@ public sealed partial class BoardForm
     List<Rectangle> iconRects = new();
     readonly List<FileSystemWatcher> desktopWatchers = new();
     readonly System.Windows.Forms.Timer iconRefresh = new() { Interval = 400 };
+    readonly System.Windows.Forms.Timer desktopFitCheck = new() { Interval = 2000 };
 
     // The hook fields below are used on the hook thread (see InputHooks); the UI thread only
     // resets them. Everything the hook thread reads from the board is a plain field it can read
@@ -56,8 +57,8 @@ public sealed partial class BoardForm
     IWin32Window? DialogOwner => wallpaper ? null : this;
 
     (Tool, string)[] ToolButtons => wallpaper
-        ? [(Tool.Desktop, DesktopIcon), (Tool.Pen, PenIcon), (Tool.Eraser, EraserIcon), (Tool.Text, TextIcon)]
-        : [(Tool.Pen, PenIcon), (Tool.Eraser, EraserIcon), (Tool.Text, TextIcon)];
+        ? [(Tool.Desktop, DesktopIcon), (Tool.Pen, PenIcon), (Tool.Highlighter, HighlighterIcon), (Tool.Text, TextIcon), (Tool.Eraser, EraserIcon), (Tool.Lasso, LassoIcon)]
+        : [(Tool.Pen, PenIcon), (Tool.Highlighter, HighlighterIcon), (Tool.Text, TextIcon), (Tool.Eraser, EraserIcon), (Tool.Lasso, LassoIcon)];
 
     // Where the toolbar sits, in client DIPs: the window, or above the taskbar on the main monitor.
     RectangleF ToolbarArea
@@ -146,6 +147,8 @@ public sealed partial class BoardForm
             desktopWatchers.Add(watcher);
         }
         Microsoft.Win32.SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
+        Microsoft.Win32.SystemEvents.PowerModeChanged += OnPowerModeChanged;
+        desktopFitCheck.Tick += (_, _) => OnDesktopFitCheck();
         // If Pawboard was moved since Start with Windows was switched on, keep the shortcut working.
         Autostart.RepairIfBroken();
         ReadIconPositions();
@@ -199,6 +202,8 @@ public sealed partial class BoardForm
         iconRefresh.Dispose();
         foreach (var w in desktopWatchers) w.Dispose();
         Microsoft.Win32.SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
+        Microsoft.Win32.SystemEvents.PowerModeChanged -= OnPowerModeChanged;
+        desktopFitCheck.Dispose();
         if (tray != null)
         {
             tray.Visible = false;
@@ -231,13 +236,46 @@ public sealed partial class BoardForm
         // Monitors added, removed or rearranged: cover the new layout and re-read the icons.
         // (Raised on a system thread, so hop to the UI thread first.)
         if (!IsHandleCreated) return;
-        BeginInvoke(() =>
+        Post(() =>
         {
-            Desktop.AttachBehindIcons(Handle);
-            cacheDirty = true;
-            Invalidate();
-            RefreshIconsSoon();
+            Log.Write($"display changed: {SystemInformation.VirtualScreen}");
+            FitToDesktop();
+            CheckDesktopFitForAWhile();
         });
+    }
+
+    void OnPowerModeChanged(object? sender, Microsoft.Win32.PowerModeChangedEventArgs e)
+    {
+        // Waking from sleep, monitors come back one by one, sometimes without a display change
+        // being announced: look again over the next seconds.
+        if (e.Mode == Microsoft.Win32.PowerModes.Resume && IsHandleCreated) Post(CheckDesktopFitForAWhile);
+    }
+
+    void FitToDesktop()
+    {
+        Desktop.AttachBehindIcons(Handle);
+        cacheDirty = true;
+        Invalidate();
+        RefreshIconsSoon();
+    }
+
+    // After a display change or waking up, Explorer may still be moving its windows (and monitors
+    // still waking) after the first fit. Check a few more times, then stop again.
+    int desktopFitChecks;
+
+    void CheckDesktopFitForAWhile()
+    {
+        desktopFitChecks = 6;
+        desktopFitCheck.Stop();
+        desktopFitCheck.Start();
+    }
+
+    void OnDesktopFitCheck()
+    {
+        if (--desktopFitChecks <= 0) desktopFitCheck.Stop();
+        if (Desktop.CoversVirtualScreen(Handle)) return;
+        Log.Write($"board didn't cover the screens ({SystemInformation.VirtualScreen}); fitting again");
+        FitToDesktop();
     }
 
     void UpdateFullscreen(nint foreground)
@@ -364,14 +402,17 @@ public sealed partial class BoardForm
             {
                 if (!Desktop.IsDesktopAt(screen))
                 {
-                    // Clicked into an app: an open text box or menu is done.
+                    // Clicked into an app: an open text box, menu or tool panel is done.
                     if (editing != null) BeginInvoke(CommitTextEdit);
                     if (menuOpen) BeginInvoke(CloseMenu);
+                    if (!optionsRect.IsEmpty) BeginInvoke(CloseOptions);
                     return false;
                 }
                 var dip = new System.Numerics.Vector2(client.X, client.Y) / hookDpiScale;
                 // While the menu is open, any click on the desktop is the board's (it closes the menu).
-                bool onToolbar = toolbarRect.Contains(dip.X, dip.Y) || menuOpen;
+                bool onToolbar = toolbarRect.Contains(dip.X, dip.Y) || menuOpen ||
+                    optionsRect.Contains(dip.X, dip.Y) ||                                 // a tool's colours and sizes
+                    (tool == Tool.Lasso && pickedHitRect.Contains(dip.X, dip.Y));   // the lasso's picks and bin button
                 if (!onToolbar && (tool == Tool.Desktop || OverIcon(screen)))
                 {
                     if (editing != null) BeginInvoke(CommitTextEdit);
@@ -395,10 +436,19 @@ public sealed partial class BoardForm
             {
                 if (editing != null) BeginInvoke(CommitTextEdit);
                 if (menuOpen) BeginInvoke(CloseMenu);
-                // In the Desktop tool, on icons and on apps, right-click is Windows' as always.
-                if (tool == Tool.Desktop || !Desktop.IsDesktopAt(screen) || OverIcon(screen)) return false;
+                if (!Desktop.IsDesktopAt(screen)) return false;
                 var dip = new System.Numerics.Vector2(client.X, client.Y) / hookDpiScale;
-                if (toolbarRect.Contains(dip.X, dip.Y)) return false;
+                if (toolbarRect.Contains(dip.X, dip.Y))
+                {
+                    // Right-click on the toolbar: a tool's colours and sizes (with any tool).
+                    hookCapture = MouseButtons.Right;
+                    rightUndecided = false;
+                    BeginInvoke(() => PointerDown(MouseButtons.Right, client));
+                    return true;
+                }
+                if (!optionsRect.IsEmpty) BeginInvoke(CloseOptions);
+                // In the Desktop tool, on icons and on apps, right-click is Windows' as always.
+                if (tool == Tool.Desktop || OverIcon(screen)) return false;
                 hookCapture = MouseButtons.Right;
                 BeginInvoke(CloseShellMenu);
                 rightUndecided = true;

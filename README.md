@@ -11,7 +11,7 @@ Made with Claude (Opus 5.5). I came up with the idea and tested it, Claude wrote
 
 ## Download
 
-Grab `Pawboard-0.2.0-win-x64.exe` from [Releases](https://github.com/NeatoPurrito/Pawboard/releases)
+Grab `Pawboard-0.3.0-win-x64.exe` from [Releases](https://github.com/NeatoPurrito/Pawboard/releases)
 and run it. Windows 11, 64-bit.
 
 It isn't code-signed, so Windows will warn you: click **More info → Run anyway**.
@@ -20,10 +20,11 @@ To quit, right-click the paw in the tray → **Exit Pawboard**.
 
 ## How it works
 
-Pick a tool from the toolbar at the bottom: pen, eraser, text, or the arrow to use your desktop
-normally. Scroll to zoom in, middle-drag to move around, right-drag to erase. The ⌄ button
-shrinks the toolbar down to just the arrow and the pen. The ☰ menu has save/open, dark mode,
-backgrounds, Lock zoom and Start with Windows.
+Pick a tool from the toolbar at the bottom: pen, highlighter, eraser, text, lasso, or the arrow to
+use your desktop normally. Right-click a tool (or click it again) for its colours and sizes. Scroll
+to zoom in, middle-drag to move around, right-drag to erase. The ⌄ button shrinks the toolbar down
+to just the arrow and the pen. The ☰ menu has save/open, save as picture, dark mode, backgrounds
+(including your own wallpaper), Lock zoom and Start with Windows.
 
 It saves by itself and uses no CPU when you're not drawing.
 
@@ -31,10 +32,12 @@ It saves by itself and uses no CPU when you're not drawing.
 
 | | |
 |---|---|
+| Right-click a tool, or click it again | Its colours and sizes |
 | Scroll wheel | Zoom in / out |
 | Middle-drag | Move around (when zoomed in) |
-| Right-drag | Erase (with pen, eraser or text selected) |
+| Right-drag | Erase. With Smart erasing on (☰), the pen erases only pen ink and the highlighter only highlights |
 | ↶ ↷ on the toolbar | Undo / redo |
+| Lasso: draw a loop | Pick up ink and text, then drag to move, drag a corner to resize, click a colour to recolour, or the bin to delete |
 
 In a text box:
 
@@ -53,7 +56,8 @@ In a text box:
 
 No internet access at all. To catch clicks on the desktop it watches the mouse, and it only reads
 the keyboard while you're typing in one of its text boxes. Nothing you draw or type is logged. Your board is saved in
-`%LOCALAPPDATA%\Pawboard`.
+`%LOCALAPPDATA%\Pawboard`. With Show my wallpaper on, it reads which picture Windows uses as your
+wallpaper, to draw it under the board.
 
 ## Build it yourself
 

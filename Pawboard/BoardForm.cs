@@ -14,15 +14,18 @@ namespace Pawboard;
 // caret blink are the only timers, and each runs only while it's needed.
 //
 // Everything is driven from the toolbar at the bottom; the keyboard is only used for typing
-// into a text box (plus Ctrl+Z / Ctrl+V).
+// into a text box (with the usual editing keys, see HandleKey).
 public sealed partial class BoardForm : Form
 {
     // Desktop: the board steps aside so icons and the desktop work as usual (wallpaper mode only).
-    enum Tool { Pen, Eraser, Text, Desktop }
+    // Pen, Eraser, Text and Highlighter come first: they index ToolSizes.
+    enum Tool { Pen, Eraser, Text, Highlighter, Desktop, Lasso }
 
     static readonly uint[] Palette = [0xFF1E1E1E, 0xFF1971C2, 0xFFE03131, 0xFF2F9E44, 0xFFF08C00];
-    // Per tool, five sizes in screen DIPs: pen width, eraser radius, text height.
-    static readonly float[][] ToolSizes = [[3, 5, 8, 13, 20], [6, 10, 16, 26, 40], [16, 22, 30, 40, 56]];
+    // Yellow, green, pink, blue, orange: a black highlighter would be no use.
+    static readonly uint[] HighlightPalette = [0xFFFFD400, 0xFF40DC6E, 0xFFFF5C8D, 0xFF4DABF7, 0xFFFF922B];
+    // Per tool, five sizes in screen DIPs: pen width, eraser radius, text height, highlighter width.
+    static readonly float[][] ToolSizes = [[3, 5, 8, 13, 20], [6, 10, 16, 26, 40], [16, 22, 30, 40, 56], [10, 16, 24, 34, 48]];
 
     const float DotSpacing = 24;     // world units at zoom 1
     // Screen DIPs: mouse wiggles shorter than about this get ironed out of the line. Measured on
@@ -32,7 +35,9 @@ public sealed partial class BoardForm : Form
     const float MinZoom = 1f, MaxZoom = 8f;
     const string IconFont = "Segoe Fluent Icons";
     const string PenIcon = "\uE70F", EraserIcon = "\uE75C", TextIcon = "\uE8D2", UndoIcon = "\uE7A7", RedoIcon = "\uE7A6";
-    const string DesktopIcon = "\uE8B0", HideIcon = "\uE70D", ExpandIcon = "\uE70E";
+    const string DesktopIcon = "\uE8B0", HideIcon = "\uE70D", ExpandIcon = "\uE70E", TrashIcon = "\uE74D";
+    const string LassoIcon = "";     // drawn by DrawLassoIcon
+    const string HighlighterIcon = "\uED64";
     const string MoonIcon = "\uE708", SunIcon = "\uE706";
 
     readonly ID2D1Factory factory = D2D1.D2D1CreateFactory<ID2D1Factory>();
@@ -70,10 +75,9 @@ public sealed partial class BoardForm : Form
     Theme Colors => dark ? Theme.Dark : Theme.Light;
 
     Tool tool = Tool.Pen;
-    int colorIndex;
-    readonly int[] sizeIndex = [1, 1, 1];
+    readonly int[] sizeIndex = [1, 1, 1, 1];   // per tool, like colorIndex (see BoardForm.Toolbar.cs)
 
-    enum Mode { None, Draw, Erase, Pan, PressText, MoveText, ResizeText, Slide, SelectText }
+    enum Mode { None, Draw, Erase, Pan, PressText, MoveText, ResizeText, Slide, SelectText, Lasso, MovePicked }
     Mode mode;
     MouseButtons modeButton;
     Vector2 cursor;                  // last mouse position, screen DIPs
@@ -168,6 +172,10 @@ public sealed partial class BoardForm : Form
         patternStrength = float.IsFinite(settings.PatternStrength) ? Math.Clamp(settings.PatternStrength, 0, 1) : 0.5f;
         toolbarHidden = settings.ToolbarHidden;
         zoomLocked = settings.ZoomLocked;
+        showDesktopImage = settings.ShowWallpaper;
+        smartErase = settings.SmartErase;
+        simpleToolbar = settings.SimpleToolbar;
+        imageVeil = float.IsFinite(settings.WallpaperVeil) ? Math.Clamp(settings.WallpaperVeil, 0, 1) : 0.6f;
         ApplyWindowTheme();
         SetPointer(Cursors.Cross);
         KeyPreview = true;
@@ -187,12 +195,20 @@ public sealed partial class BoardForm : Form
         }).ToArray();
         bannerFont = dwrite.CreateTextFormat("Segoe UI", FontWeight.Normal, Vortice.DirectWrite.FontStyle.Normal, FontStretch.Normal, 14f);
         CreateMenuFonts();
+        CreateLassoResources();
 
         LoadBoard();
-        board.Changed += () => { contentVersion++; saveTimer.Stop(); saveTimer.Start(); };
+        board.Changed += () =>
+        {
+            contentVersion++;
+            picked = null;   // the lasso's picks may be gone or replaced now (undo, erasing...)
+            saveTimer.Stop();
+            saveTimer.Start();
+        };
         saveTimer.Tick += (_, _) => { saveTimer.Stop(); SaveBoard(); };
         caretTimer.Tick += (_, _) => { caretOn = !caretOn; Invalidate(); };
         noticeTimer.Tick += (_, _) => HideNotice();
+        StartDesktopImageWatch();
         if (saveAfterLoad) saveTimer.Start();
     }
 
@@ -302,6 +318,7 @@ public sealed partial class BoardForm : Form
         caretTimer.Dispose();
         noticeTimer.Dispose();
         saveTimer.Dispose();
+        StopDesktopImageWatch();
         DiscardDevice();
         activeGeometry?.Dispose();
         board.ReleaseAll();
@@ -310,6 +327,7 @@ public sealed partial class BoardForm : Form
         foreach (var f in sizeLetterFonts) f.Dispose();
         bannerFont.Dispose();
         DisposeMenuFonts();
+        dashStyle?.Dispose();
         dwrite.Dispose();
         factory.Dispose();
     }
@@ -363,6 +381,8 @@ public sealed partial class BoardForm : Form
     {
         cache?.Dispose(); cache = null;
         boardPicture?.Dispose(); boardPicture = null;
+        desktopImageLayer?.Dispose(); desktopImageLayer = null;
+        desktopImageDirty = true;
         brush?.Dispose(); brush = null;
         rt?.Dispose(); rt = null;
     }
@@ -374,6 +394,10 @@ public sealed partial class BoardForm : Form
         rt.Resize(new SizeI(ClientSize.Width, ClientSize.Height));
         cache?.Dispose(); cache = null;
         boardPicture?.Dispose(); boardPicture = null;
+        // The screen layout may have changed: read the wallpaper's monitors again.
+        desktopImageLayer?.Dispose(); desktopImageLayer = null;
+        desktopImageDirty = true;
+        desktopImageInfo = null;
         ClampView();
         cacheDirty = true;
         Invalidate();
@@ -420,6 +444,8 @@ public sealed partial class BoardForm : Form
     {
         EnsureDevice();
         Animate();
+        EnsureDesktopImageLayer();
+        if (rt == null) { Invalidate(); return; }   // the device was lost painting the wallpaper
         if (cache == null)
         {
             cache = rt!.CreateCompatibleRenderTarget(null, null, null, CompatibleRenderTargetOptions.None);
@@ -449,6 +475,8 @@ public sealed partial class BoardForm : Form
         r.Transform = Matrix3x2.Identity;
         if (scalePicture)
         {
+            // The wallpaper stays put; only the board on top of it (see-through then) zooms.
+            if (ShowingDesktopImage) DrawDesktopImage(r);
             r.Transform = ViewTransform;
             r.DrawBitmap(boardPicture!.Bitmap, 1f, BitmapInterpolationMode.Linear);
             r.Transform = Matrix3x2.Identity;
@@ -458,14 +486,16 @@ public sealed partial class BoardForm : Form
         if (active != null && activeGeometry != null)
         {
             r.Transform = ViewTransform;
-            brush!.Color = Argb(Colors.Display(active.Color));
+            brush!.Color = InkColor(active);
             r.FillGeometry(activeGeometry, brush);
             r.Transform = Matrix3x2.Identity;
         }
 
         DrawTextOverlay(r);
+        DrawLasso(r);
         DrawEraserCursor(r);
         DrawToolbar(r);
+        DrawOptions(r);
         DrawMenu(r);
         if (notice != null) DrawBanner(r, notice);
 
@@ -490,24 +520,25 @@ public sealed partial class BoardForm : Form
         // Paint the start view (100%, which is the whole board) into the picture.
         var (viewOffset, viewZoom) = (offset, zoom);
         (offset, zoom) = (Vector2.Zero, 1);
-        bool painted = PaintBoard(boardPicture);
+        bool painted = PaintBoard(boardPicture, seeThrough: ShowingDesktopImage);
         (offset, zoom) = (viewOffset, viewZoom);
         if (painted) boardPictureVersion = contentVersion;
     }
 
     // Background, pattern and every visible item, at the current view. False if the device was lost.
-    bool PaintBoard(ID2D1BitmapRenderTarget c)
+    // seeThrough leaves out the background (the wallpaper goes under it separately).
+    bool PaintBoard(ID2D1BitmapRenderTarget c, bool seeThrough = false)
     {
         c.BeginDraw();
         c.Transform = Matrix3x2.Identity;
-        c.Clear(Colors.Background);
+        c.Clear(seeThrough ? new Color4(0, 0, 0, 0) : Colors.Background);
+        if (!seeThrough && ShowingDesktopImage) DrawDesktopImage(c);
         DrawBackdrop(c);
 
-
         var view = VisibleWorldRect();
-        foreach (var item in eraseWorking ?? board.Items)
+        foreach (var item in PaintOrder(eraseWorking ?? board.Items))
         {
-            if (item == HiddenInCache || !item.Bounds.IntersectsWith(view)) continue;
+            if (item == HiddenInCache || pickedHidden.Contains(item) || !item.Bounds.IntersectsWith(view)) continue;
             DrawItem(c, item);
         }
         c.Transform = Matrix3x2.Identity;
@@ -515,17 +546,29 @@ public sealed partial class BoardForm : Form
         return true;
     }
 
-    void DrawItem(ID2D1RenderTarget target, Item item)
+    // Highlights first, so they lie under the other ink and text whenever they were drawn.
+    static IEnumerable<Item> PaintOrder(List<Item> items) =>
+        items.Where(i => i is Stroke { Highlight: true }).Concat(items.Where(i => i is not Stroke { Highlight: true }));
+
+    Color4 InkColor(Item item)
     {
-        brush!.Color = Argb(Colors.Display(item.Color));
+        var color = Argb(Colors.Display(item.Color));
+        return item is Stroke { Highlight: true } ? WithAlpha(color, Colors.HighlightAlpha) : color;
+    }
+
+    // moved: an extra world-space transform, for items being dragged with the lasso.
+    void DrawItem(ID2D1RenderTarget target, Item item, Matrix3x2? moved = null)
+    {
+        brush!.Color = InkColor(item);
+        var view = moved is { } m ? m * ViewTransform : ViewTransform;
         switch (item)
         {
             case Stroke { Geometry: { } geometry }:
-                target.Transform = ViewTransform;
+                target.Transform = view;
                 target.FillGeometry(geometry, brush);
                 break;
             case TextItem { Layout: { } layout } t:
-                target.Transform = Matrix3x2.CreateScale(t.Scale) * Matrix3x2.CreateTranslation(t.Position) * ViewTransform;
+                target.Transform = Matrix3x2.CreateScale(t.Scale) * Matrix3x2.CreateTranslation(t.Position) * view;
                 target.DrawTextLayout(Vector2.Zero, layout, brush, DrawTextOptions.NoSnap);
                 break;
         }
@@ -535,7 +578,8 @@ public sealed partial class BoardForm : Form
     // A new stroke only needs painting on top of the cache, not a full rebuild.
     void AddToCache(Item item)
     {
-        if (cache == null || cacheDirty) { cacheDirty = true; return; }
+        // A highlight goes under the ink already there, so that needs a full repaint.
+        if (cache == null || cacheDirty || item is Stroke { Highlight: true }) { cacheDirty = true; return; }
         cache.BeginDraw();
         DrawItem(cache, item);
         if (cache.EndDraw().Failure) DiscardDevice();
@@ -718,132 +762,6 @@ public sealed partial class BoardForm : Form
         r.DrawEllipse(new Ellipse(cursor, radius, radius), brush, 1f);
     }
 
-    void DrawToolbar(ID2D1RenderTarget r)
-    {
-        toolbarButtons.Clear();
-        var area = ToolbarArea;
-        if (toolbarHidden)
-        {
-            DrawMiniToolbar(r, area);
-            return;
-        }
-        const float h = 48, toolW = 40, swatch = 28, sizeSlot = 30, pad = 8, gap = 18;
-        var tools = ToolButtons;
-        float w = pad + tools.Length * toolW + gap + Palette.Length * swatch + gap + 5 * sizeSlot + gap + 2 * toolW + gap + 2 * toolW + pad;
-        float x = MathF.Round(area.Left + (area.Width - w) / 2), y = area.Bottom - h - 14;
-        toolbarRect = new RectangleF(x, y, w, h);
-
-        brush!.Color = Colors.PanelShadow;
-        r.FillRoundedRectangle(new RoundedRectangle(new RectangleF(x, y + 2, w, h), 14, 14), brush);
-        brush.Color = Colors.Panel;
-        r.FillRoundedRectangle(new RoundedRectangle(new RectangleF(x, y, w, h), 14, 14), brush);
-        brush.Color = Colors.PanelBorder;
-        r.DrawRoundedRectangle(new RoundedRectangle(new RectangleF(x + 0.5f, y + 0.5f, w - 1, h - 1), 14, 14), brush, 1f);
-
-        float cx = x + pad;
-        float cy = y + h / 2;
-
-        // Tools
-        foreach (var (t, icon) in tools)
-        {
-            var rect = new RectangleF(cx + 3, y + 7, toolW - 6, h - 14);
-            bool selected = tool == t;
-            if (selected)
-            {
-                brush.Color = WithAlpha(Colors.Accent, dark ? 0.16f : 0.13f);
-                r.FillRoundedRectangle(new RoundedRectangle(rect, 9, 9), brush);
-            }
-            brush.Color = selected ? Colors.Accent : Colors.Icon;
-            r.DrawText(icon, iconFont, ToDRect(rect), brush);
-            var chosen = t;
-            toolbarButtons.Add((new RectangleF(cx, y, toolW, h), () => SetTool(chosen)));
-            cx += toolW;
-        }
-        Divider(r, ref cx, y, h, gap);
-
-        // Colours (the eraser has none, so they fade while it's selected)
-        float colorAlpha = tool is Tool.Eraser or Tool.Desktop ? 0.3f : 1f;
-        for (int i = 0; i < Palette.Length; i++)
-        {
-            var center = new Vector2(cx + swatch / 2, cy);
-            if (i == colorIndex && tool is Tool.Pen or Tool.Text)
-            {
-                brush.Color = WithAlpha(Argb(Colors.Display(Palette[i])), 0.35f);
-                r.DrawEllipse(new Ellipse(center, 12, 12), brush, 2f);
-            }
-            brush.Color = WithAlpha(Argb(Colors.Display(Palette[i])), colorAlpha);
-            r.FillEllipse(new Ellipse(center, 8, 8), brush);
-            int index = i;
-            toolbarButtons.Add((new RectangleF(cx, y, swatch, h), () => SetColor(index)));
-            cx += swatch;
-        }
-        Divider(r, ref cx, y, h, gap);
-
-        // Sizes for the current tool
-        int ti = tool == Tool.Desktop ? (int)Tool.Pen : (int)tool;   // Desktop shows the pen's sizes
-        for (int i = 0; i < 5; i++)
-        {
-            var center = new Vector2(cx + sizeSlot / 2, cy);
-            if (i == sizeIndex[ti])
-            {
-                brush.Color = Colors.Faint(0.08f);
-                r.FillEllipse(new Ellipse(center, 13.5f, 13.5f), brush);
-            }
-            var ink = Argb(Colors.Display(Palette[colorIndex]));
-            switch ((Tool)ti)
-            {
-                case Tool.Pen:
-                    float dot = MathF.Min(10, 1.5f + ToolSizes[ti][i] * 0.45f);
-                    brush.Color = ink;
-                    r.FillEllipse(new Ellipse(center, dot, dot), brush);
-                    break;
-                case Tool.Eraser:
-                    float ring = 3 + i * 2.2f;
-                    brush.Color = Colors.Faint(0.55f);
-                    r.DrawEllipse(new Ellipse(center, ring, ring), brush, 1.2f);
-                    break;
-                case Tool.Text:
-                    brush.Color = ink;
-                    r.DrawText("a", sizeLetterFonts[i], new DRect(center.X - 14, center.Y - 15, 28, 28), brush);
-                    break;
-            }
-            int index = i;
-            toolbarButtons.Add((new RectangleF(cx, y, sizeSlot, h), () => SetSize(index)));
-            cx += sizeSlot;
-        }
-        Divider(r, ref cx, y, h, gap);
-
-        // Undo / redo
-        foreach (var (icon, enabled, action) in new (string, bool, Action)[]
-                 { (UndoIcon, board.CanUndo || editing != null, UndoAction), (RedoIcon, board.CanRedo, RedoAction) })
-        {
-            var rect = new RectangleF(cx + 3, y + 7, toolW - 6, h - 14);
-            brush.Color = enabled ? Colors.Icon : WithAlpha(Colors.Icon, Colors.Icon.A * 0.35f);
-            r.DrawText(icon, iconFont, ToDRect(rect), brush);
-            if (enabled) toolbarButtons.Add((new RectangleF(cx, y, toolW, h), action));
-            cx += toolW;
-        }
-        Divider(r, ref cx, y, h, gap);
-
-        // ☰ menu: save / open, background pattern, light / dark
-        var menuIcon = new RectangleF(cx + 3, y + 7, toolW - 6, h - 14);
-        if (menuOpen)
-        {
-            brush.Color = WithAlpha(Colors.Accent, dark ? 0.16f : 0.13f);
-            r.FillRoundedRectangle(new RoundedRectangle(menuIcon, 9, 9), brush);
-        }
-        brush.Color = menuOpen ? Colors.Accent : Colors.Icon;
-        r.DrawText(MenuIcon, iconFont, ToDRect(menuIcon), brush);
-        menuButtonRect = new RectangleF(cx, y, toolW, h);
-        toolbarButtons.Add((menuButtonRect, ToggleMenu));
-        cx += toolW;
-
-        // Hide: the toolbar shrinks to a small tab
-        brush.Color = Colors.Icon;
-        r.DrawText(HideIcon, iconFont, ToDRect(new RectangleF(cx + 3, y + 7, toolW - 6, h - 14)), brush);
-        toolbarButtons.Add((new RectangleF(cx, y, toolW, h), HideToolbar));
-    }
-
     // The hidden toolbar: a mini bar with just the arrow and the pen (so it's always clear which
     // one is on), plus a button that brings the full toolbar back.
     (Tool, string)[] MiniTools => ToolButtons.Where(b => b.Item1 is Tool.Desktop or Tool.Pen).ToArray();
@@ -866,17 +784,7 @@ public sealed partial class BoardForm : Form
         float cx = x + pad;
         foreach (var (t, icon) in tools)
         {
-            var rect = new RectangleF(cx + 3, y + 5, toolW - 6, h - 10);
-            bool selected = tool == t;
-            if (selected)
-            {
-                brush.Color = WithAlpha(Colors.Accent, dark ? 0.16f : 0.13f);
-                r.FillRoundedRectangle(new RoundedRectangle(rect, 8, 8), brush);
-            }
-            brush.Color = selected ? Colors.Accent : Colors.Icon;
-            r.DrawText(icon, iconFont, ToDRect(rect), brush);
-            var chosen = t;
-            toolbarButtons.Add((new RectangleF(cx, y, toolW, h), () => SetTool(chosen)));
+            DrawToolButton(r, t, icon, new RectangleF(cx, y, toolW, h), inset: 5);
             cx += toolW;
         }
         Divider(r, ref cx, y, h, gap);
@@ -993,6 +901,8 @@ public sealed partial class BoardForm : Form
     {
         CommitTextEdit();
         CloseMenu();
+        CloseOptions();
+        ClearPicked();
         tool = t;
         hoverText = null;
         UpdateCursor();
@@ -1018,22 +928,34 @@ public sealed partial class BoardForm : Form
         Invalidate();
     }
 
-    void SetColor(int index)
+    // A colour for a tool (each tool keeps its own). With the lasso it recolours what's picked up.
+    void SetColor(Tool t, int index)
     {
-        colorIndex = index;
-        if (tool is Tool.Eraser or Tool.Desktop) SetTool(Tool.Pen);   // picking a colour means you want to draw
-        if (editing != null)
+        if (t == Tool.Lasso && picked != null)
         {
-            editing.Color = Palette[index];
-            Invalidate();
+            RecolorPicked(index);
+            return;
         }
+        if (!HasColors(t))
+        {
+            // Picking a colour with the eraser, arrow or (empty) lasso means you want to draw.
+            t = Tool.Pen;
+            SetTool(t);
+        }
+        colorIndex[(int)t] = index;
+        if (t == Tool.Text && editing != null) editing.Color = Palette[index];
+        Invalidate();
     }
 
-    void SetSize(int index)
+    void SetSize(Tool t, int index)
     {
-        if (tool == Tool.Desktop) SetTool(Tool.Pen);
-        sizeIndex[(int)tool] = index;
-        if (editing != null)
+        if (!HasSizes(t))
+        {
+            t = Tool.Pen;
+            SetTool(t);
+        }
+        sizeIndex[(int)t] = index;
+        if (t == Tool.Text && editing != null)
         {
             editing.FontSize = ToolSizes[(int)Tool.Text][index] / zoom;
             textInk.Finish(editing);
@@ -1199,15 +1121,22 @@ public sealed partial class BoardForm : Form
         if (mode != Mode.None) return;
 
         if (button == MouseButtons.Left && MenuClick(cursor)) return;
+        if (button == MouseButtons.Left && OptionsClick(cursor)) return;
         if (button != MouseButtons.Left) CloseMenu();
 
-        if (button == MouseButtons.Left && toolbarRect.Contains(cursor.X, cursor.Y))
+        if (toolbarRect.Contains(cursor.X, cursor.Y))
         {
-            foreach (var (rect, click) in toolbarButtons)
-                if (rect.Contains(cursor.X, cursor.Y)) { click(); break; }
+            if (button == MouseButtons.Left)
+            {
+                foreach (var (rect, click) in toolbarButtons)
+                    if (rect.Contains(cursor.X, cursor.Y)) { click(); break; }
+            }
+            // Right-click a tool: its colours and sizes.
+            else if (button == MouseButtons.Right && ToolAt(cursor) is { } t) ToggleOptions(t);
             Invalidate();
             return;
         }
+        if (button != MouseButtons.Left) CloseOptions();
 
         if (button == MouseButtons.Middle) { if (!zoomLocked) BeginPan(button); }
         else if (button == MouseButtons.Right) BeginErase(button);   // right-drag erases with any tool
@@ -1215,9 +1144,10 @@ public sealed partial class BoardForm : Form
         {
             switch (tool)
             {
-                case Tool.Pen: BeginStroke(); break;
+                case Tool.Pen or Tool.Highlighter: BeginStroke(); break;
                 case Tool.Eraser: BeginErase(button); break;
                 case Tool.Text: TextMouseDown(); break;
+                case Tool.Lasso: LassoMouseDown(); break;
             }
         }
     }
@@ -1266,6 +1196,12 @@ public sealed partial class BoardForm : Form
                 break;
             case Mode.SelectText:
                 if (editing != null) MoveCaret(textInk.IndexAt(editing, ScreenToWorld(cursor)), extend: true);
+                break;
+            case Mode.Lasso:
+                ExtendLasso();
+                break;
+            case Mode.MovePicked:
+                DragPicked();
                 break;
             default:
                 if (tool == Tool.Eraser) Invalidate();   // the eraser circle follows the mouse
@@ -1329,6 +1265,8 @@ public sealed partial class BoardForm : Form
             case Mode.MoveText: EndMoveText(); break;
             case Mode.ResizeText: EndResize(); break;
             case Mode.Slide: SaveSettings(); break;
+            case Mode.Lasso: FinishLasso(); break;
+            case Mode.MovePicked: FinishPickedDrag(); break;
         }
         mode = Mode.None;
         UpdateCursor();
@@ -1386,12 +1324,17 @@ public sealed partial class BoardForm : Form
         mode = Mode.Draw;
         modeButton = MouseButtons.Left;
         lastMove = null;
+        // The highlighter is a pen with its own colours and sizes, an even width, and twice the
+        // smoothing: highlights should come out calm, not shaky.
+        bool highlight = tool == Tool.Highlighter;
+        var kind = highlight ? Tool.Highlighter : Tool.Pen;
         active = new Stroke
         {
-            Color = Palette[colorIndex],
+            Color = ColorOf(kind),
             // Pen size is constant on screen, so zoomed out you write finer in world terms.
-            Size = ToolSizes[(int)Tool.Pen][sizeIndex[(int)Tool.Pen]] / zoom,
-            Smoothing = PenSmoothing / zoom,
+            Size = ToolSizes[(int)kind][sizeIndex[(int)kind]] / zoom,
+            Smoothing = (highlight ? 2 : 1) * PenSmoothing / zoom,
+            Highlight = highlight,
         };
         active.Points.Add(ScreenToWorld(cursor));
         activeDirty = true;
@@ -1422,6 +1365,11 @@ public sealed partial class BoardForm : Form
 
     // ---------- eraser ----------
 
+    // Smart erasing (in the menu): right-drag with the pen erases only pen ink, with the
+    // highlighter only highlights. The eraser tool, and right-drag with any other tool, erase both.
+    bool smartErase = true;
+    bool? eraseHighlights;           // this drag: true only highlights, false only pen ink, null both
+
     void BeginErase(MouseButtons button)
     {
         CommitTextEdit();
@@ -1429,6 +1377,8 @@ public sealed partial class BoardForm : Form
         coasting = false;
         mode = Mode.Erase;
         modeButton = button;
+        eraseHighlights = !smartErase || button != MouseButtons.Right ? null
+            : tool switch { Tool.Pen => false, Tool.Highlighter => true, _ => null };
         eraseWorking = board.Items.ToList();
         eraseCopies.Clear();
         eraseChanged = false;
@@ -1454,9 +1404,9 @@ public sealed partial class BoardForm : Form
         var items = eraseWorking!;
         for (int i = items.Count - 1; i >= 0; i--)
         {
+            if (eraseHighlights is { } onlyHighlights && items[i] is Stroke { Highlight: var h } && h != onlyHighlights) continue;
             switch (items[i])
             {
-
                 case Stroke s when eraseCopies.Contains(s):
                     if (Ink.Erase(factory, s, a, b, radius)) eraseChanged = cacheDirty = true;
                     break;
@@ -1576,7 +1526,7 @@ public sealed partial class BoardForm : Form
 
         var t = new TextItem
         {
-            Color = Palette[colorIndex],
+            Color = ColorOf(Tool.Text),
             FontSize = ToolSizes[(int)Tool.Text][sizeIndex[(int)Tool.Text]] / zoom,
             Position = world,
         };
@@ -1892,7 +1842,7 @@ public sealed partial class BoardForm : Form
         if (tool != Tool.Text) SetTool(Tool.Text);
         var t = new TextItem
         {
-            Color = Palette[colorIndex],
+            Color = ColorOf(Tool.Text),
             FontSize = ToolSizes[(int)Tool.Text][sizeIndex[(int)Tool.Text]] / zoom,
             Position = ScreenToWorld(cursor),
         };
@@ -1940,7 +1890,7 @@ public sealed partial class BoardForm : Form
         StartAnimation();
     }
 
-    // ---------- keyboard: typing into a text box, plus Ctrl+Z / Ctrl+V ----------
+    // ---------- keyboard: typing into a text box ----------
 
     protected override void OnKeyDown(KeyEventArgs e)
     {
