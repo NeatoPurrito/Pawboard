@@ -49,7 +49,7 @@ public sealed partial class BoardForm
         float cx = x + BarPad;
         foreach (var (t, icon) in tools)
         {
-            DrawToolButton(r, t, icon, cx, y, h, colorDot: simpleToolbar);
+            DrawToolButton(r, t, icon, new RectangleF(cx, y, ToolWidth, h), inset: 7);
             cx += ToolWidth;
         }
         Divider(r, ref cx, y, h, BarGap);
@@ -108,30 +108,42 @@ public sealed partial class BoardForm
         r.DrawRoundedRectangle(new RoundedRectangle(RectangleF.Inflate(rect, -0.5f, -0.5f), radius, radius), brush, 1f);
     }
 
-    // A tool's button; with colorDot, a small dot under the icon in the colour it draws with.
-    void DrawToolButton(ID2D1RenderTarget r, Tool t, string icon, float cx, float y, float h, bool colorDot)
+    // A tool's button (on the toolbar or the mini bar). Tools that draw show their icon in the
+    // colour they draw with, and tools with sizes a dot under it that grows with the size.
+    void DrawToolButton(ID2D1RenderTarget r, Tool t, string icon, RectangleF slot, float inset)
     {
-        var rect = IconRect(cx, y, h);
+        var rect = new RectangleF(slot.X + 3, slot.Y + inset, slot.Width - 6, slot.Height - inset * 2);
         bool selected = tool == t;
         if (selected)
         {
             brush!.Color = WithAlpha(Colors.Accent, dark ? 0.16f : 0.13f);
             r.FillRoundedRectangle(new RoundedRectangle(rect, 9, 9), brush);
         }
-        bool dot = colorDot && HasColors(t);
-        var iconRect = dot ? new RectangleF(rect.X, rect.Y - 3, rect.Width, rect.Height) : rect;   // room for the dot
-        brush!.Color = selected ? Colors.Accent : Colors.Icon;
+        bool sized = HasSizes(t);
+        var iconRect = sized ? new RectangleF(rect.X, rect.Y - 3, rect.Width, rect.Height) : rect;   // room for the size dot
+        brush!.Color = HasColors(t) ? ToolInk(t) : selected ? Colors.Accent : Colors.Icon;
         if (t == Tool.Lasso) DrawLassoIcon(r, iconRect, brush.Color);
         else r.DrawText(icon, iconFont, ToDRect(iconRect), brush);
-        if (dot)
-        {
-            brush.Color = Argb(Colors.Display(ColorOf(t)));
-            r.FillEllipse(new Ellipse(new Vector2(cx + ToolWidth / 2, rect.Bottom - 5), 2.6f, 2.6f), brush);
-        }
+        if (sized) DrawSizeDot(r, t, new Vector2(slot.X + slot.Width / 2, rect.Bottom - 4.5f));
         var chosen = t;
-        var slot = new RectangleF(cx, y, ToolWidth, h);
         toolSlots[t] = slot;
         toolbarButtons.Add((slot, () => ClickTool(chosen)));
+    }
+
+    Color4 ToolInk(Tool t) => Argb(Colors.Display(ColorOf(t)));
+
+    // The current size at a glance: five steps of dot (a ring for the eraser).
+    void DrawSizeDot(ID2D1RenderTarget r, Tool t, Vector2 at)
+    {
+        float radius = 1.2f + sizeIndex[(int)t] * 0.55f;
+        if (t == Tool.Eraser)
+        {
+            brush!.Color = Colors.Faint(0.55f);
+            r.DrawEllipse(new Ellipse(at, radius + 0.4f, radius + 0.4f), brush, 1f);
+            return;
+        }
+        brush!.Color = ToolInk(t);
+        r.FillEllipse(new Ellipse(at, radius, radius), brush);
     }
 
     // Five colour swatches for a tool (`ring` marks its current one).
@@ -250,7 +262,7 @@ public sealed partial class BoardForm
     void DrawOptions(ID2D1RenderTarget r)
     {
         optionsButtons.Clear();
-        if (optionsTool is not { } t || toolbarHidden || !toolSlots.TryGetValue(t, out var slot)) { optionsRect = RectangleF.Empty; return; }
+        if (optionsTool is not { } t || !toolSlots.TryGetValue(t, out var slot)) { optionsRect = RectangleF.Empty; return; }
         float h = BarHeight;
         float w = BarPad + (HasColors(t) ? Palette.Length * SwatchWidth + BarGap : 0) + 5 * SizeWidth + BarPad;
         var area = ToolbarArea;

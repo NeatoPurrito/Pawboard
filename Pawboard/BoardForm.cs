@@ -784,17 +784,7 @@ public sealed partial class BoardForm : Form
         float cx = x + pad;
         foreach (var (t, icon) in tools)
         {
-            var rect = new RectangleF(cx + 3, y + 5, toolW - 6, h - 10);
-            bool selected = tool == t;
-            if (selected)
-            {
-                brush.Color = WithAlpha(Colors.Accent, dark ? 0.16f : 0.13f);
-                r.FillRoundedRectangle(new RoundedRectangle(rect, 8, 8), brush);
-            }
-            brush.Color = selected ? Colors.Accent : Colors.Icon;
-            r.DrawText(icon, iconFont, ToDRect(rect), brush);
-            var chosen = t;
-            toolbarButtons.Add((new RectangleF(cx, y, toolW, h), () => SetTool(chosen)));
+            DrawToolButton(r, t, icon, new RectangleF(cx, y, toolW, h), inset: 5);
             cx += toolW;
         }
         Divider(r, ref cx, y, h, gap);
