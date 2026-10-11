@@ -14,7 +14,7 @@ namespace Pawboard;
 // caret blink are the only timers, and each runs only while it's needed.
 //
 // Everything is driven from the toolbar at the bottom; the keyboard is only used for typing
-// into a text box (plus Ctrl+Z / Ctrl+V).
+// into a text box (with the usual editing keys, see HandleKey).
 public sealed partial class BoardForm : Form
 {
     // Desktop: the board steps aside so icons and the desktop work as usual (wallpaper mode only).
@@ -1890,7 +1890,7 @@ public sealed partial class BoardForm : Form
         StartAnimation();
     }
 
-    // ---------- keyboard: typing into a text box, plus Ctrl+Z / Ctrl+V ----------
+    // ---------- keyboard: typing into a text box ----------
 
     protected override void OnKeyDown(KeyEventArgs e)
     {

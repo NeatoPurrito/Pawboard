@@ -6,8 +6,9 @@ using DRect = Vortice.Mathematics.Rect;
 
 namespace Pawboard;
 
-// The ☰ menu at the end of the toolbar: save / open, the board's background pattern, and
-// light / dark mode. Drawn on the board like the toolbar, so it works the same on the wallpaper.
+// The ☰ menu at the end of the toolbar: save / open / save as picture, the background (pattern,
+// its strength, your wallpaper) and the switches. Drawn on the board like the toolbar, so it
+// works the same on the wallpaper.
 public sealed partial class BoardForm
 {
     enum Backdrop { Dots, Lines, Squares, Plain }
@@ -199,7 +200,7 @@ public sealed partial class BoardForm
         SwitchRow(r, x, ref cy, row, "\uE91B", "Show my wallpaper", showDesktopImage, ToggleDesktopImage);
         if (showDesktopImage)
         {
-            DrawSlider(r, new RectangleF(x + pad, cy, MenuWidth - pad * 2, sliderH), Slider.Veil, imageVeil, ShowingDesktopImage);
+            DrawSlider(r, new RectangleF(x + pad, cy, MenuWidth - pad * 2, sliderH), Slider.Veil, imageVeil, showDesktopImage);
             cy += sliderH;
         }
         MenuDivider(r, x, ref cy, divider);

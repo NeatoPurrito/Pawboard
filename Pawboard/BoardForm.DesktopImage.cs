@@ -20,6 +20,9 @@ public sealed partial class BoardForm
 
     bool ShowingDesktopImage => showDesktopImage && desktopImageLayer != null;
 
+    // With the veil all the way up the picture can't be seen, so it isn't kept at all.
+    bool WantDesktopImage => showDesktopImage && imageVeil < 1;
+
     void StartDesktopImageWatch()
     {
         // Settings fires this when the wallpaper changes (also each slideshow step); wait for it
@@ -53,9 +56,8 @@ public sealed partial class BoardForm
             desktopImageCheck.Stop();
             if (!showDesktopImage) return;
             var fresh = DesktopImage.Read();
-            bool changed = fresh?.Signature != desktopImageInfo?.Signature;
-            Log.Write($"wallpaper check: {(changed ? "changed, repainting" : "unchanged")}");
-            if (!changed) return;
+            if (fresh?.Signature == desktopImageInfo?.Signature) return;
+            Log.Write("wallpaper changed; repainting");
             desktopImageInfo = fresh;
             RepaintDesktopImage();
         };
@@ -108,7 +110,18 @@ public sealed partial class BoardForm
     // Called before the board is painted; cheap when nothing changed.
     void EnsureDesktopImageLayer()
     {
-        if (!showDesktopImage || (!desktopImageDirty && desktopImageLayer != null) || rt == null) return;
+        if (!WantDesktopImage)
+        {
+            if (desktopImageLayer != null)
+            {
+                desktopImageLayer.Dispose();
+                desktopImageLayer = null;
+                desktopImageDirty = true;
+                contentVersion++;   // the zoom picture isn't see-through any more
+            }
+            return;
+        }
+        if ((!desktopImageDirty && desktopImageLayer != null) || rt == null) return;
         desktopImageDirty = false;
         desktopImageLayer?.Dispose();
         desktopImageLayer = null;
@@ -125,6 +138,7 @@ public sealed partial class BoardForm
             PaintWallpaper(layer, info);
             if (layer.EndDraw().Failure) { layer.Dispose(); DiscardDevice(); return; }
             desktopImageLayer = layer;
+            contentVersion++;   // the zoom picture is see-through now
         }
         catch (Exception ex)
         {

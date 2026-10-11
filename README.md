@@ -56,7 +56,8 @@ In a text box:
 
 No internet access at all. To catch clicks on the desktop it watches the mouse, and it only reads
 the keyboard while you're typing in one of its text boxes. Nothing you draw or type is logged. Your board is saved in
-`%LOCALAPPDATA%\Pawboard`.
+`%LOCALAPPDATA%\Pawboard`. With Show my wallpaper on, it reads which picture Windows uses as your
+wallpaper, to draw it under the board.
 
 ## Build it yourself
 
