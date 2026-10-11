@@ -22,6 +22,10 @@ public sealed partial class BoardForm
     RectangleF optionsRect;
     readonly List<(RectangleF Rect, Action Click)> optionsButtons = new();
 
+    // The simple toolbar and the mini bar have no colour or size buttons, so their tool buttons
+    // show the colour and size, and open the panel. The expanded toolbar has all that on it.
+    bool CompactBar => simpleToolbar || toolbarHidden;
+
     static bool HasColors(Tool t) => t is Tool.Pen or Tool.Text or Tool.Highlighter;
     static bool HasSizes(Tool t) => t is Tool.Pen or Tool.Eraser or Tool.Text or Tool.Highlighter;
     static uint[] PaletteOf(Tool t) => t == Tool.Highlighter ? HighlightPalette : Palette;
@@ -108,8 +112,9 @@ public sealed partial class BoardForm
         r.DrawRoundedRectangle(new RoundedRectangle(RectangleF.Inflate(rect, -0.5f, -0.5f), radius, radius), brush, 1f);
     }
 
-    // A tool's button (on the toolbar or the mini bar). Tools that draw show their icon in the
-    // colour they draw with, and tools with sizes a dot under it that grows with the size.
+    // A tool's button (on the toolbar or the mini bar). On the compact bars, tools that draw show
+    // their icon in the colour they draw with, and tools with sizes a dot under it that grows
+    // with the size.
     void DrawToolButton(ID2D1RenderTarget r, Tool t, string icon, RectangleF slot, float inset)
     {
         var rect = new RectangleF(slot.X + 3, slot.Y + inset, slot.Width - 6, slot.Height - inset * 2);
@@ -119,9 +124,9 @@ public sealed partial class BoardForm
             brush!.Color = WithAlpha(Colors.Accent, dark ? 0.16f : 0.13f);
             r.FillRoundedRectangle(new RoundedRectangle(rect, 9, 9), brush);
         }
-        bool sized = HasSizes(t);
+        bool sized = CompactBar && HasSizes(t);
         var iconRect = sized ? new RectangleF(rect.X, rect.Y - 3, rect.Width, rect.Height) : rect;   // room for the size dot
-        brush!.Color = HasColors(t) ? ToolInk(t) : selected ? Colors.Accent : Colors.Icon;
+        brush!.Color = CompactBar && HasColors(t) ? ToolInk(t) : selected ? Colors.Accent : Colors.Icon;
         if (t == Tool.Lasso) DrawLassoIcon(r, iconRect, brush.Color);
         else r.DrawText(icon, iconFont, ToDRect(iconRect), brush);
         if (sized) DrawSizeDot(r, t, new Vector2(slot.X + slot.Width / 2, rect.Bottom - 4.5f));
@@ -214,10 +219,10 @@ public sealed partial class BoardForm
 
     // ---------- the colours and sizes panel ----------
 
-    // Clicking the tool that's already selected opens (or closes) its panel.
+    // On the compact bars, clicking the tool that's already selected opens (or closes) its panel.
     void ClickTool(Tool t)
     {
-        if (t == tool && HasSizes(t)) ToggleOptions(t);
+        if (t == tool && CompactBar && HasSizes(t)) ToggleOptions(t);
         else SetTool(t);
     }
 
@@ -231,7 +236,7 @@ public sealed partial class BoardForm
     void ToggleOptions(Tool t)
     {
         CloseMenu();
-        optionsTool = optionsTool == t || !HasSizes(t) ? null : t;
+        optionsTool = optionsTool == t || !HasSizes(t) || !CompactBar ? null : t;
         Invalidate();
     }
 
